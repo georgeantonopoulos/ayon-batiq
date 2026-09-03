@@ -13,3 +13,8 @@ def __getattr__(name):
 
         return BatiqAddon
     raise AttributeError(name)
+
+
+def __dir__():
+    """Advertise the lazy add-on class to AYON's dir-based discovery."""
+    return sorted(set(globals()) | {"BatiqAddon"})

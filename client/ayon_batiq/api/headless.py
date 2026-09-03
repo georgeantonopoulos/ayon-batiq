@@ -54,7 +54,7 @@ def render(
             "method": "initialize",
             "params": {
                 "protocol_version": {"major": PROTOCOL_MAJOR, "minor": 0},
-                "client": {"name": "ayon-batiq", "version": "0.1.0"},
+                "client": {"name": "ayon-batiq", "version": "0.1.3"},
                 "capabilities": {},
             },
         },
