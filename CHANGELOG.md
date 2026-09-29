@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.6
+- Review: new `ExtractReviewIntermediates` (like Nuke's) bakes display-referred
+  review frames from the rendered EXRs with BATIQ's built-in ACES 2.0 output
+  transform (sRGB display, SDR 100 nits). Measured against the ACES 2.0 studio
+  OCIO config v3.0.0, the pixels match to within one 8-bit code value. The bake
+  reads the published EXRs, so reviews show exactly the published pixels without
+  re-rendering the comp. The artist's viewer exposure/gamma never bake in.
+- The frames are tagged `review` (plus `delete` unless the output is set to
+  publish) and the instance gets the `review` family, so core Extract Review
+  encodes the H.264 and burn-ins from its profiles. That needs a core profile
+  for host `batiq`; see README.
+- PNG/JPEG Writes are already display-referred and are reviewed directly.
+- Settings: `batiq/publish/ExtractReviewIntermediates` (outputs: name,
+  PNG/JPEG, publish, task type / product name filters, custom tags).
+- BATIQ 0.2.26 ignores the project view for Write output (ACES 1.3 gives the
+  same pixels), so no view option is offered.
+
 ## 0.1.5
 - Colorspace: the Write colorspace is published under the name the project's OCIO
   config actually uses (ACES 1.2 `ACES - ACEScg`, ACES 1.3+ `ACEScg`, aliases), or left
