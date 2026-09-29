@@ -6,6 +6,7 @@ import os
 import subprocess
 from typing import Any, Mapping
 
+from ..context import ALL_KEYS, ENV_KEY
 from .bridge_server import BridgeServer
 from .menu import register_menu
 
@@ -50,6 +51,8 @@ def dispatch(method: str, params: Mapping[str, Any]):
             "host": "batiq",
             "hostVersion": batiq.app.version,
         }
+    if method == "project.set_settings":
+        return _set_project_settings(batiq.project, params)
     if method == "project.get_metadata":
         return batiq.project.get_metadata(params["namespace"])
     if method == "project.set_metadata":
@@ -112,6 +115,41 @@ def dispatch(method: str, params: Mapping[str, Any]):
     raise ValueError("method is not allowed")
 
 
+def _set_project_settings(project, values: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply validated frame range, fps and format values to the open project."""
+    unknown = set(values) - set(ALL_KEYS)
+    if unknown:
+        raise ValueError(f"unsupported project settings: {sorted(unknown)}")
+    converted = {}
+    for key, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{key} must be a number")
+        converted[key] = float(value) if key in ("fps", "pixel_aspect") else int(value)
+    start = converted.get("frame_start", project.frame_start)
+    end = converted.get("frame_end", project.frame_end)
+    if end < start:
+        raise ValueError("frame_end must not be before frame_start")
+    # Move the end first when the new range starts after the current end.
+    order = ["frame_end", "frame_start"] if start > project.frame_end else ["frame_start", "frame_end"]
+    for key in order + ["fps", "width", "height", "pixel_aspect"]:
+        if key in converted:
+            setattr(project, key, converted[key])
+    return {key: getattr(project, key) for key in ALL_KEYS}
+
+
+def _apply_launch_context() -> None:
+    """Give a fresh, unsaved project the task's settings passed by the launch hook."""
+    import batiq
+
+    raw = os.environ.pop(ENV_KEY, None)
+    if not raw or batiq.project.path or batiq.project.modified:
+        return
+    try:
+        _set_project_settings(batiq.project, json.loads(raw))
+    except Exception as exc:  # never block BATIQ startup
+        print(f"AYON could not apply the task settings: {exc}")
+
+
 def _show_helper(tool: str) -> dict[str, Any]:
     global _helper
     executable = os.environ.get("AYON_EXECUTABLE")
@@ -150,6 +188,7 @@ def bootstrap():
         import batiq
 
         register_menu(batiq.ui, _show_helper)
+        _apply_launch_context()
     return _bridge
 
 

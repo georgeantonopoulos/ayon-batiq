@@ -1,3 +1,4 @@
+from ayon_core.lib import BoolDef
 from ayon_core.pipeline.create import AutoCreator, CreatedInstance
 
 class WriteCreator(AutoCreator):
@@ -7,6 +8,8 @@ class WriteCreator(AutoCreator):
     default_variant = "Main"
     def create(self, options=None):
         return None
+    def get_instance_attr_defs(self):
+        return [BoolDef("review", default=True, label="Review")]
     def collect_instances(self):
         host = self.create_context.host
         project_entity = self.create_context.get_current_project_entity()
