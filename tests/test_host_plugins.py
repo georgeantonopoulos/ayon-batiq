@@ -22,6 +22,7 @@ from ayon_batiq.plugins.inventory.select_containers import SelectInGraph
 from ayon_batiq.plugins.load.load_image import LoadImage
 from ayon_batiq.plugins.publish.extract_render import ExtractRender
 from ayon_batiq.plugins.publish.collect_writes import CollectWrites
+from ayon_batiq.plugins.publish.extract_save_workfile import ExtractSaveWorkfile
 
 
 class Bridge:
@@ -135,6 +136,81 @@ class HostPluginsTest(unittest.TestCase):
         self.assertEqual(render.call_args.kwargs["write_node"], 77)
         self.assertNotIn("representations", instance.data)
 
+    def _render_instance(self, staging, frame_start, frame_end, **extra):
+        instance = Mock()
+        instance.context.data = {"batiqExecutable": "/batiq"}
+        instance.data = {
+            "stagingDir": str(staging), "currentFile": "scene.batiq",
+            "frameStart": frame_start, "frameEnd": frame_end,
+            "output": "beauty.####.exr", "outputFormat": "exr",
+            "transientData": {"write_node_id": 77}, **extra,
+        }
+        return instance
+
+    def _fake_render(self, staging, frames, stray=()):
+        def render(**_kwargs):
+            frame_files = {}
+            for frame in frames:
+                path = Path(staging) / f"beauty.{frame:04d}.exr"
+                path.write_bytes(b"exr")
+                frame_files[frame] = str(path)
+            for name in stray:
+                (Path(staging) / name).write_bytes(b"old")
+            return {"written": len(frames), "frame_files": frame_files}
+        return render
+
+    def test_extractor_publishes_exactly_the_rendered_frames_with_frame_range(self):
+        staging = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(staging))
+        instance = self._render_instance(staging, 1001, 1003, colorspace="ACEScg")
+        render = self._fake_render(staging, [1001, 1002, 1003], stray=["beauty.0999.exr", "notes.txt"])
+        with patch("ayon_batiq.plugins.publish.extract_render.render", side_effect=render), \
+                patch.object(ExtractRender, "set_representation_colorspace") as set_colorspace:
+            ExtractRender().process(instance)
+        representation = instance.data["representations"][0]
+        self.assertEqual(representation["files"], ["beauty.1001.exr", "beauty.1002.exr", "beauty.1003.exr"])
+        self.assertEqual((representation["frameStart"], representation["frameEnd"]), (1001, 1003))
+        self.assertEqual(representation["ext"], "exr")
+        self.assertEqual(set_colorspace.call_args.kwargs["colorspace"], "ACEScg")
+
+    def test_extractor_single_frame_is_one_file_and_no_colorspace_is_skipped(self):
+        staging = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(staging))
+        instance = self._render_instance(staging, 1001, 1001)
+        with patch("ayon_batiq.plugins.publish.extract_render.render", side_effect=self._fake_render(staging, [1001])), \
+                patch.object(ExtractRender, "set_representation_colorspace") as set_colorspace:
+            ExtractRender().process(instance)
+        self.assertEqual(instance.data["representations"][0]["files"], "beauty.1001.exr")
+        set_colorspace.assert_not_called()
+
+    def test_extractor_rejects_missing_frames_and_files_outside_staging(self):
+        staging = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(staging))
+        instance = self._render_instance(staging, 1001, 1003)
+        with patch("ayon_batiq.plugins.publish.extract_render.render", side_effect=self._fake_render(staging, [1001, 1003])):
+            with self.assertRaisesRegex(RuntimeError, r"missing \[1002\]"):
+                ExtractRender().process(instance)
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(elsewhere))
+        with patch("ayon_batiq.plugins.publish.extract_render.render", side_effect=self._fake_render(elsewhere, [1001, 1002, 1003])):
+            with self.assertRaisesRegex(RuntimeError, "outside the staging directory"):
+                ExtractRender().process(instance)
+
+    def test_save_workfile_runs_before_render_and_only_when_modified(self):
+        self.assertLess(ExtractSaveWorkfile.order, ExtractRender.order)
+        state = {"modified": True}
+        self.host.get_current_workfile = lambda: "/work/shot.batiq"
+        self.host.workfile_has_unsaved_changes = lambda: state["modified"]
+        self.host.save_workfile = Mock(side_effect=lambda filepath=None: state.update(modified=False))
+        ExtractSaveWorkfile().process(Mock())
+        self.host.save_workfile.assert_called_once_with()
+        ExtractSaveWorkfile().process(Mock())
+        self.host.save_workfile.assert_called_once_with()
+        state["modified"] = True
+        self.host.save_workfile = Mock()
+        with self.assertRaisesRegex(RuntimeError, "unsaved changes after saving"):
+            ExtractSaveWorkfile().process(Mock())
+
     def test_write_collector_uses_real_publish_transient_data(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -166,7 +242,7 @@ class HostPluginsTest(unittest.TestCase):
             assert init["params"]["protocol_version"]["major"] == 1
             assert render["params"]["write_node"] == 77
             print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"protocol_version":{"major":1,"minor":0},"capabilities":{"render":True}}}))
-            print(json.dumps({"jsonrpc":"2.0","method":"render_event","params":{"sequence":1,"event":"progress","data":{}}}))
+            print(json.dumps({"jsonrpc":"2.0","method":"render_event","params":{"sequence":1,"event":"progress","data":{"completed":1,"total":1,"frame":1,"path":"/stage/render.exr"}}}))
             print(json.dumps({"jsonrpc":"2.0","method":"render_event","params":{"sequence":2,"event":"finished","data":{"written":1}}}))
             print(json.dumps({"jsonrpc":"2.0","id":2,"result":{"written":1}}))
         """))
@@ -175,7 +251,7 @@ class HostPluginsTest(unittest.TestCase):
             executable=str(executable), project="scene.batiq", output="render.exr",
             frames=(1, 1, 1), write_node=77, timeout=2,
         )
-        self.assertEqual(result, {"written": 1})
+        self.assertEqual(result, {"written": 1, "frame_files": {1: "/stage/render.exr"}})
 
 
 if __name__ == "__main__":

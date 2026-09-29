@@ -25,13 +25,13 @@ class TestPackageMetadata(TestCase):
     def test_addon_initializes_with_current_addons_manager_contract(self):
         addon = BatiqAddon(AddonsManager(initialize=False), {})
         self.assertEqual(addon.name, "batiq")
-        self.assertEqual(addon.version, "0.1.3")
+        self.assertEqual(addon.version, "0.1.4")
         self.assertEqual(addon.get_workfile_extensions(), [".batiq"])
 
     def test_package_metadata_matches_ayon_host_contract(self):
         self.assertEqual(package.name, "batiq")
         self.assertEqual(package.title, "BATIQ")
-        self.assertEqual(package.version, "0.1.3")
+        self.assertEqual(package.version, "0.1.4")
         self.assertEqual(package.app_host_name, "batiq")
         self.assertEqual(package.client_dir, "ayon_batiq")
         self.assertTrue(package.project_can_override_addon_version)
