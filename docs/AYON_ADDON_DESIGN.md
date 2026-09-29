@@ -47,9 +47,28 @@ extractor saves the workfile and invokes the existing isolated
 `batiq-headless` Write-node render path. The old direct `batiq_api` AYON
 adapter is for standalone automation and is not the host Publisher.
 
-The BATIQ menu should expose exactly `AYON/Workfiles...`, `AYON/Load...`,
-`AYON/Manage...`, and `AYON/Publish...`. Create is intentionally not a menu
-item in v1.
+The BATIQ menu exposes `AYON/Workfiles...`, `AYON/Load...`, `AYON/Manage...`,
+and `AYON/Publish...`, plus the context-settings actions `AYON/Set Frame Range`,
+`AYON/Set Resolution` and `AYON/Apply All Settings` (0.1.5). Create is
+intentionally not a menu item: creators are automatic.
+
+## Task settings (0.1.5)
+
+`settings_from_attrib` turns task attributes into BATIQ project values: frame
+range with handles (as Nuke sets its root), fps, resolution and pixel aspect.
+A pre-launch hook passes them as JSON in `BATIQ_AYON_CONTEXT_SETTINGS`; startup
+applies them only to a fresh, unsaved project. The menu actions and the
+`ValidateBatiqContextSettings` repair call the allowlisted
+`project.set_settings` bridge method, which accepts only those six keys.
+
+## Colorspace (0.1.5)
+
+BATIQ reads ACEScg, ACES2065-1, Linear sRGB, sRGB - Texture and Rec.709 and
+writes ACEScg, ACES2065-1 or Linear sRGB. `colorspace.py` maps these to the
+names in the project's OCIO config (config names and aliases, ACES 1.2 and
+1.3+) and back. Studio rules in `batiq/colorspace/rules` take priority. A Write
+colorspace with no match in the config is published without colorspace data
+rather than under a name the config does not know.
 
 This separate repository contains the add-on scaffold, authenticated bridge,
 Qt helper, host, plugins, and offline contract tests. Those tests do not prove

@@ -35,14 +35,26 @@ class CollectWrites(pyblish.api.InstancePlugin):
             or (Path(write_path).name if write_path else None)
             or f"{instance.data.get('productName', 'render')}.####.{output_format}"
         )
+        frame_start = int(node.get("write_first") if limited else info.get("frame_start", 1))
+        frame_end = int(node.get("write_last") if limited else info.get("frame_end", 1))
         instance.data.update({
             "writeNodeId": write_id,
             "writeNodeName": node.get("name"),
             "writePath": write_path,
             "currentFile": current_file,
             "stagingDir": staging,
-            "frameStart": int(node.get("write_first") if limited else info.get("frame_start", 1)),
-            "frameEnd": int(node.get("write_last") if limited else info.get("frame_end", 1)),
+            "frameStart": frame_start,
+            "frameEnd": frame_end,
+            # The Write range already is the full range; there are no extra handles.
+            "handleStart": 0,
+            "handleEnd": 0,
+            "frameStartHandle": frame_start,
+            "frameEndHandle": frame_end,
+            "fps": info.get("fps") or instance.context.data.get("fps"),
+            "resolutionWidth": info.get("resolutionWidth"),
+            "resolutionHeight": info.get("resolutionHeight"),
+            "pixelAspect": info.get("pixelAspect"),
+            "review": bool((instance.data.get("creator_attributes") or {}).get("review", True)),
             "step": 1,
             "output": output,
             "outputFormat": output_format,

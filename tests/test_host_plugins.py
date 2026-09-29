@@ -85,7 +85,8 @@ class HostPluginsTest(unittest.TestCase):
 
     def test_loader_core_contract_and_inventory_discovery(self):
         context = {"project": {"name": "Demo"}, "product": {"name": "plate", "productBaseType": "plate"}, "representation": {"id": "rep", "name": "main", "context": {"ext": "exr"}}}
-        with patch.object(LoadImage, "filepath_from_context", return_value="/show/plate.exr"):
+        with patch.object(LoadImage, "filepath_from_context", return_value="/show/plate.exr"), \
+                patch("ayon_batiq.plugins.load.load_image.get_project_settings", return_value={}):
             self.assertTrue(LoadImage.is_compatible_loader(context))
             loaded = LoadImage().load(context, name="plate")
         self.assertEqual(loaded["id"], 8)
@@ -164,14 +165,46 @@ class HostPluginsTest(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(staging))
         instance = self._render_instance(staging, 1001, 1003, colorspace="ACEScg")
         render = self._fake_render(staging, [1001, 1002, 1003], stray=["beauty.0999.exr", "notes.txt"])
+        instance.context.data.update(imageioSettings=({"path": "/config.ocio"}, None), project_settings={})
+        config = {"colorspaces": {"ACES - ACEScg": {"aliases": []}}}
         with patch("ayon_batiq.plugins.publish.extract_render.render", side_effect=render), \
+                patch("ayon_batiq.plugins.publish.extract_render.get_ocio_config_colorspaces", return_value=config), \
                 patch.object(ExtractRender, "set_representation_colorspace") as set_colorspace:
             ExtractRender().process(instance)
         representation = instance.data["representations"][0]
         self.assertEqual(representation["files"], ["beauty.1001.exr", "beauty.1002.exr", "beauty.1003.exr"])
         self.assertEqual((representation["frameStart"], representation["frameEnd"]), (1001, 1003))
         self.assertEqual(representation["ext"], "exr")
-        self.assertEqual(set_colorspace.call_args.kwargs["colorspace"], "ACEScg")
+        # BATIQ's "ACEScg" is published under the config's own name (ACES 1.2 here).
+        self.assertEqual(set_colorspace.call_args.kwargs["colorspace"], "ACES - ACEScg")
+
+    def test_extractor_skips_colorspace_missing_from_config_or_without_management(self):
+        staging = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(staging))
+        for imageio, config in (
+            (({"path": "/config.ocio"}, None), {"colorspaces": {"Raw": {}}}),
+            ((None, None), None),
+        ):
+            instance = self._render_instance(staging, 1001, 1001, colorspace="ACEScg")
+            instance.context.data.update(imageioSettings=imageio, project_settings={})
+            with patch("ayon_batiq.plugins.publish.extract_render.render", side_effect=self._fake_render(staging, [1001])), \
+                    patch("ayon_batiq.plugins.publish.extract_render.get_ocio_config_colorspaces", return_value=config), \
+                    patch.object(ExtractRender, "set_representation_colorspace") as set_colorspace:
+                ExtractRender().process(instance)
+            set_colorspace.assert_not_called()
+
+    def test_loader_places_movies_and_sequences_with_handles_and_maps_colorspace(self):
+        version = {"attrib": {"frameStart": 1001, "frameEnd": 1100, "handleStart": 8, "handleEnd": 8}}
+        movie = {"project": {"name": "Demo"}, "version": version, "representation": {
+            "files": [{}], "context": {}, "data": {"colorspaceData": {"colorspace": "Output - Rec.709"}}}}
+        sequence = {"project": {"name": "Demo"}, "version": version, "representation": {
+            "files": [{}, {}], "context": {"frame": "1001"}, "data": {"colorspaceData": {"colorspace": "ACES - ACEScg"}}}}
+        with patch("ayon_batiq.plugins.load.load_image.get_project_settings", return_value={}):
+            movie_params = LoadImage()._read_params(movie, "/show/plate.mov")
+            sequence_params = LoadImage()._read_params(sequence, "/show/plate.1001.exr")
+        # BATIQ reads source frame = project frame + frame_offset; movies start at 1.
+        self.assertEqual(movie_params, {"read_first": 1, "read_last": 116, "frame_offset": -992, "input_space": "Rec.709"})
+        self.assertEqual(sequence_params, {"read_first": 993, "read_last": 1108, "frame_offset": 0, "input_space": "ACEScg"})
 
     def test_extractor_single_frame_is_one_file_and_no_colorspace_is_skipped(self):
         staging = Path(tempfile.mkdtemp())

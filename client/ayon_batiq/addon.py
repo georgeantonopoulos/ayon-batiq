@@ -53,7 +53,7 @@ class BatiqAddon(AYONAddon, IHostAddon):
     def get_launch_hook_paths(self, app):
         if getattr(app, "host_name", None) != self.host_name:
             return []
-        return []
+        return [str(PACKAGE_ROOT / "hooks")]
 
     def get_workfile_extensions(self):
         return [".batiq"]
