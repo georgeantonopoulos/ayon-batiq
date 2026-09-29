@@ -20,7 +20,7 @@ class RemoteBatiqHost(HostBase, IWorkfileHost, ILoadHost, IPublishHost):
     def __init__(self, bridge):
         super().__init__()
         self.bridge = bridge
-        self._plugin_paths: list[str] = []
+        self._plugin_paths: dict = {}
 
     def get_current_workfile(self):
         return self.bridge.call("workfile.get") or None
@@ -57,6 +57,20 @@ class RemoteBatiqHost(HostBase, IWorkfileHost, ILoadHost, IPublishHost):
     def get_batiq_project_info(self) -> dict[str, Any]:
         return self.bridge.call("project.info") or {}
 
+    def apply_context_settings(self, keys=None) -> dict[str, Any]:
+        """Set BATIQ's frame range, fps and format from the current AYON task."""
+        from ayon_core.pipeline.context_tools import get_current_task_entity
+
+        from ..context import settings_from_attrib
+
+        task_entity = get_current_task_entity(fields={"attrib"})
+        if not task_entity:
+            raise RuntimeError("no current AYON task to take settings from")
+        values = settings_from_attrib(task_entity["attrib"])
+        if keys is not None:
+            values = {key: value for key, value in values.items() if key in keys}
+        return self.bridge.call("project.set_settings", values)
+
     def get_containers(self):
         containers = []
         for node in self.bridge.call("nodes.list") or []:
@@ -69,27 +83,26 @@ class RemoteBatiqHost(HostBase, IWorkfileHost, ILoadHost, IPublishHost):
         import pyblish.api
 
         plugins = Path(__file__).resolve().parents[1] / "plugins"
-        paths = {
-            register_creator_plugin_path: plugins / "create",
-            register_loader_plugin_path: plugins / "load",
-            register_inventory_action_path: plugins / "inventory",
+        self._plugin_paths = {
+            register_creator_plugin_path: str(plugins / "create"),
+            register_loader_plugin_path: str(plugins / "load"),
+            register_inventory_action_path: str(plugins / "inventory"),
+            pyblish.api.register_plugin_path: str(plugins / "publish"),
         }
         pyblish.api.register_host(self.name)
-        pyblish.api.register_plugin_path(str(plugins / "publish"))
-        for register, path in paths.items():
-            register(str(path))
-            self._plugin_paths.append(str(path))
-        self._plugin_paths.append(str(plugins / "publish"))
+        for register, path in self._plugin_paths.items():
+            register(path)
 
     def uninstall(self):
         import pyblish.api
 
-        deregister_creator_plugin_path(str(Path(self._plugin_paths[0]))) if self._plugin_paths else None
-        if len(self._plugin_paths) > 1:
-            deregister_loader_plugin_path(self._plugin_paths[1])
-        if len(self._plugin_paths) > 2:
-            deregister_inventory_action_path(self._plugin_paths[2])
-        if len(self._plugin_paths) > 3:
-            pyblish.api.deregister_plugin_path(self._plugin_paths[3])
+        deregister = {
+            register_creator_plugin_path: deregister_creator_plugin_path,
+            register_loader_plugin_path: deregister_loader_plugin_path,
+            register_inventory_action_path: deregister_inventory_action_path,
+            pyblish.api.register_plugin_path: pyblish.api.deregister_plugin_path,
+        }
+        for register, path in self._plugin_paths.items():
+            deregister[register](path)
         pyblish.api.deregister_host(self.name)
         self._plugin_paths.clear()

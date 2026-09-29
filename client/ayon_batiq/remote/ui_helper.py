@@ -10,9 +10,18 @@ from ayon_batiq.api.host import RemoteBatiqHost
 
 
 def show_tool(tool: str) -> None:
+    from ayon_core.pipeline import registered_host
     from ayon_core.tools.utils import host_tools
 
+    from ayon_batiq.context import FORMAT_KEYS, FRAME_KEYS
+
+    def apply(keys):
+        return lambda: registered_host().apply_context_settings(keys)
+
     actions = {
+        "set_frame_range": apply(FRAME_KEYS + ("fps",)),
+        "set_resolution": apply(FORMAT_KEYS),
+        "apply_settings": apply(None),
         "workfiles": lambda: host_tools.show_workfiles(parent=None, on_top=False),
         "load": lambda: host_tools.show_loader(parent=None, use_context=True),
         "manage": lambda: host_tools.show_scene_inventory(parent=None),
