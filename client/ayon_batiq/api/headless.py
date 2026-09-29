@@ -17,6 +17,23 @@ class HeadlessRenderError(RuntimeError):
     """BATIQ could not produce a validated successful render result."""
 
 
+def rendered_files(frame_files: Mapping[int, str], expected, directory: Path) -> list[str]:
+    """File names in frame order, only when BATIQ wrote exactly the expected frames."""
+    missing = sorted(set(expected) - set(frame_files))
+    extra = sorted(set(frame_files) - set(expected))
+    if missing or extra:
+        raise RuntimeError(f"BATIQ render frames do not match the range: missing {missing}, unexpected {extra}")
+    files = []
+    for frame in expected:
+        path = Path(frame_files[frame])
+        if path.parent.resolve() != Path(directory).resolve():
+            raise RuntimeError(f"BATIQ wrote frame {frame} outside the staging directory: {path}")
+        if not path.is_file():
+            raise RuntimeError(f"BATIQ reported frame {frame} but the file is missing: {path}")
+        files.append(path.name)
+    return files
+
+
 def _object(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise HeadlessRenderError(f"{label} must be an object")
