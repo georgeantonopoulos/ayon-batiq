@@ -5,7 +5,7 @@ from ayon_core.pipeline.colorspace import (
     get_ocio_config_colorspaces,
 )
 from ayon_core.pipeline.publish import ColormanagedPyblishPluginMixin
-from ayon_batiq.api.headless import HeadlessRenderError, render
+from ayon_batiq.api.headless import HeadlessRenderError, render, rendered_files
 from ayon_batiq.colorspace import to_ocio
 
 class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
@@ -69,17 +69,4 @@ class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
 
     @staticmethod
     def _rendered_files(frame_files, expected, staging):
-        """File names in frame order, only when BATIQ wrote exactly the expected frames."""
-        missing = sorted(set(expected) - set(frame_files))
-        extra = sorted(set(frame_files) - set(expected))
-        if missing or extra:
-            raise RuntimeError(f"BATIQ render frames do not match the range: missing {missing}, unexpected {extra}")
-        files = []
-        for frame in expected:
-            path = Path(frame_files[frame])
-            if path.parent.resolve() != staging.resolve():
-                raise RuntimeError(f"BATIQ wrote frame {frame} outside the staging directory: {path}")
-            if not path.is_file():
-                raise RuntimeError(f"BATIQ reported frame {frame} but the file is missing: {path}")
-            files.append(path.name)
-        return files
+        return rendered_files(frame_files, expected, staging)

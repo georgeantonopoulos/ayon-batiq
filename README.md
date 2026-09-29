@@ -1,6 +1,6 @@
 # AYON-BATIQ
 
-AYON-BATIQ 0.1.5 is the separately installed AYON host add-on for BATIQ. It is
+AYON-BATIQ 0.1.6 is the separately installed AYON host add-on for BATIQ. It is
 not bundled into BATIQ: without this add-on, BATIQ keeps its generic embedded
 `import batiq` API and starts with no AYON menus, Qt process, or AYON imports.
 
@@ -14,7 +14,7 @@ python create_package.py
 
 This uses AYON's standard package workflow and writes the server-installable
 archive under `package/`. In AYON Server, open **Studio Settings → Bundles →
-Install addon**, choose that archive, then enable BATIQ 0.1.5 in a bundle.
+Install addon**, choose that archive, then enable BATIQ 0.1.6 in a bundle.
 
 The add-on requires AYON Server `>=1.8.4,<2.0.0`, AYON Core
 `>=1.9.10-bcn.1` (including final `1.9.10` and newer), and
@@ -32,6 +32,16 @@ environment to BATIQ alone.
 - `colorspace/rules`: map BATIQ colorspaces to names in the project's OCIO
   config, overriding the built-in table (loading and publishing).
 - `publish/ValidateBatiqContextSettings`: enabled / optional / active.
+- `publish/ExtractReviewIntermediates`: review frames baked by BATIQ with its
+  ACES 2.0 output transform (sRGB display, SDR 100 nits).
+
+## Review
+
+As in the Nuke add-on, the host bakes the review source and core **Extract
+Review** encodes it. The core settings need an Extract Review profile with host
+`batiq` and product base type `render`, for example an H.264 output tagged
+`burnin` and `ftrackreview`. Leave out `-apply_trc gamma22` (used in Nuke's
+EXR-based profile): BATIQ's review frames are already display-referred.
 
 See `CHANGELOG.md` for what changed in each version.
 
@@ -47,7 +57,7 @@ PYTHONPATH=.:client:<ayon-core>/client:<dependencies> python -m pytest tests
 ## Development mode
 
 1. Run `python create_package.py` once and install the generated ZIP on AYON Server.
-2. Add and enable BATIQ 0.1.5 in a development bundle.
+2. Add and enable BATIQ 0.1.6 in a development bundle.
 3. Enable the add-on custom path and point its client path at `<path-to-ayon-batiq>/client`.
 4. Start AYON Launcher with that development bundle (or `--use-dev`).
 5. Launch the configured BATIQ application.

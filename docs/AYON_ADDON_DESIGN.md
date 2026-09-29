@@ -74,3 +74,15 @@ This separate repository contains the add-on scaffold, authenticated bridge,
 Qt helper, host, plugins, and offline contract tests. Those tests do not prove
 a production AYON package install or live BATIQ-to-Qt round trip; Launcher
 packaging and live AYON validation remain separate release gates.
+
+## Review (0.1.6)
+
+Following the Nuke add-on, review is split in two. `ExtractReviewIntermediates`
+(host) builds a two-node BATIQ project, a Read of the published EXRs into a
+PNG/JPEG Write, from the artist's project with viewer exposure and gamma reset.
+It renders that project headless, so BATIQ's built-in ACES 2.0 output transform
+bakes the frames. Core Extract Review then encodes them from its profiles.
+Keeping the colour transform inside BATIQ means the review shows what the
+artist saw, and BATIQ needs no OCIO config for it. Published EXRs keep
+colorspace names from the studio OCIO config (ACES 1.2 at BCN), so Nuke and
+other ACES 1.2 hosts read them correctly.

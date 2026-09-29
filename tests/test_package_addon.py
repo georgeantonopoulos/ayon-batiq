@@ -25,13 +25,13 @@ class TestPackageMetadata(TestCase):
     def test_addon_initializes_with_current_addons_manager_contract(self):
         addon = BatiqAddon(AddonsManager(initialize=False), {})
         self.assertEqual(addon.name, "batiq")
-        self.assertEqual(addon.version, "0.1.5")
+        self.assertEqual(addon.version, "0.1.6")
         self.assertEqual(addon.get_workfile_extensions(), [".batiq"])
 
     def test_package_metadata_matches_ayon_host_contract(self):
         self.assertEqual(package.name, "batiq")
         self.assertEqual(package.title, "BATIQ")
-        self.assertEqual(package.version, "0.1.5")
+        self.assertEqual(package.version, "0.1.6")
         self.assertEqual(package.app_host_name, "batiq")
         self.assertEqual(package.client_dir, "ayon_batiq")
         self.assertTrue(package.project_can_override_addon_version)
@@ -75,7 +75,10 @@ class TestPackageMetadata(TestCase):
 
         fake_server = SimpleNamespace(
             addons=SimpleNamespace(BaseServerAddon=BaseServerAddon),
-            settings=SimpleNamespace(BaseSettingsModel=BaseSettingsModel, SettingsField=SettingsField),
+            settings=SimpleNamespace(
+                BaseSettingsModel=BaseSettingsModel, SettingsField=SettingsField,
+                task_types_enum=lambda: [],
+            ),
         )
         with mock.patch.dict(sys.modules, {
             "ayon_server": fake_server,
@@ -90,6 +93,12 @@ class TestPackageMetadata(TestCase):
             defaults = server_module.DEFAULT_VALUES
             self.assertTrue(defaults["workfile"]["apply_context_on_launch"])
             self.assertEqual(defaults["colorspace"], {"rules": []})
+            review = defaults["publish"]["ExtractReviewIntermediates"]
+            self.assertTrue(review["enabled"])
+            self.assertEqual(
+                [(o["name"], o["extension"], o["publish"]) for o in review["outputs"]],
+                [("aces20", "png", False)],
+            )
             self.assertEqual(
                 defaults["publish"]["ValidateBatiqContextSettings"],
                 {"enabled": True, "optional": True, "active": True},
