@@ -7,6 +7,8 @@ import threading
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..version import __version__
+
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 PROTOCOL_MAJOR = 1
 
@@ -54,7 +56,7 @@ def render(
             "method": "initialize",
             "params": {
                 "protocol_version": {"major": PROTOCOL_MAJOR, "minor": 0},
-                "client": {"name": "ayon-batiq", "version": "0.1.3"},
+                "client": {"name": "ayon-batiq", "version": __version__},
                 "capabilities": {},
             },
         },
@@ -179,4 +181,16 @@ def render(
         detail = terminal[2].get("data")
         error = detail.get("error") if isinstance(detail, dict) else None
         raise HeadlessRenderError(str(error or f"render {terminal[1]}"))
-    return dict(result)
+    frame_files: dict[int, str] = {}
+    for _sequence, event, params in events:
+        detail = params.get("data")
+        if event != "progress" or not isinstance(detail, dict):
+            continue
+        frame, path = detail.get("frame"), detail.get("path")
+        if isinstance(frame, bool) or not isinstance(frame, int) or not isinstance(path, str):
+            raise HeadlessRenderError("progress render_event requires an integer frame and string path")
+        if frame in frame_files:
+            raise HeadlessRenderError(f"BATIQ reported frame {frame} more than once")
+        frame_files[frame] = path
+    # Frames and the exact files BATIQ wrote, so callers never guess from a directory listing.
+    return {**result, "frame_files": frame_files}
