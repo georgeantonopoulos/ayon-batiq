@@ -13,7 +13,7 @@ renders, as before, and their settings are never touched.
 from abc import abstractmethod
 
 import ayon_api
-from ayon_core.lib import BoolDef, NumberDef, StringTemplate, get_version_from_path
+from ayon_core.lib import BoolDef, EnumDef, NumberDef, StringTemplate, get_version_from_path
 from ayon_core.pipeline.colorspace import get_imageio_config_preset, get_ocio_config_colorspaces
 from ayon_core.pipeline.create import CreatedInstance, Creator, CreatorError
 from ayon_core.pipeline.template_data import get_template_data_with_names
@@ -30,6 +30,8 @@ WRITE_PARAMS = {
 EXTENSIONS = {"exr": "exr", "tif": "tif", "dpx": "dpx", "png": "png", "jpeg": "jpg"}
 # BATIQ's built-in names, used only when the project has no colour management.
 UNMANAGED_COLORSPACES = {"scene_linear": "ACEScg", "rendering": "ACEScg", "compositing_linear": "ACEScg"}
+# As Nuke's write creators word them.
+RENDER_TARGETS = {"local": "Local machine rendering", "frames": "Use existing frames"}
 # Instance changes that move the Write's render path or frame range.
 CONTEXT_KEYS = ("productName", "folderPath", "task", "variant")
 
@@ -56,11 +58,12 @@ class BatiqWriteCreator(Creator):
         """Abstract, so plugin discovery skips this base class."""
 
     def get_pre_create_attr_defs(self):
-        return [BoolDef("use_selection", default=True, label="Use selection")]
+        return [BoolDef("use_selection", default=True, label="Use selection"), self._render_target_def()]
 
     def get_instance_attr_defs(self):
         first, last = self._default_range()
         return [
+            self._render_target_def(),
             BoolDef("review", default=self.review, label="Review"),
             BoolDef(
                 "use_custom_range", default=False, label="Custom frame range",
@@ -69,6 +72,13 @@ class BatiqWriteCreator(Creator):
             NumberDef("frame_start", label="First frame", decimals=0, default=first),
             NumberDef("frame_end", label="Last frame", decimals=0, default=last),
         ]
+
+    @staticmethod
+    def _render_target_def():
+        return EnumDef(
+            "render_target", items=RENDER_TARGETS, default="local", label="Render target",
+            tooltip="Render the Write now, or publish the frames it already rendered to its path.",
+        )
 
     def _default_range(self):
         """The current task's frame range with handles, for attribute defaults."""
@@ -117,7 +127,8 @@ class BatiqWriteCreator(Creator):
 
     def _creator_attributes(self, pre_create_data):
         first, last = self._default_range()
-        return {"review": self.review, "use_custom_range": False, "frame_start": first, "frame_end": last}
+        return {"render_target": pre_create_data.get("render_target") or "local", "review": self.review,
+                "use_custom_range": False, "frame_start": first, "frame_end": last}
 
     # -- Write node setup -----------------------------------------------------
     def _write_params(self, instance):
@@ -335,11 +346,15 @@ class CreateWriteImage(BatiqWriteCreator):
         ]
 
     def get_instance_attr_defs(self):
-        return [NumberDef("active_frame", label="Active frame", decimals=0, default=self._default_frame())]
+        return [
+            self._render_target_def(),
+            NumberDef("active_frame", label="Active frame", decimals=0, default=self._default_frame()),
+        ]
 
     def _creator_attributes(self, pre_create_data):
         frame = pre_create_data.get("active_frame")
-        return {"active_frame": int(frame if frame is not None else self._default_frame())}
+        return {"render_target": pre_create_data.get("render_target") or "local",
+                "active_frame": int(frame if frame is not None else self._default_frame())}
 
     def _frame_range(self, instance):
         frame = int(instance["creator_attributes"]["active_frame"])

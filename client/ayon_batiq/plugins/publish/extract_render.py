@@ -4,7 +4,8 @@ from ayon_core.pipeline.colorspace import (
     get_colorspace_settings_from_publish_context,
     get_ocio_config_colorspaces,
 )
-from ayon_core.pipeline.publish import ColormanagedPyblishPluginMixin
+from ayon_core.pipeline.publish import ColormanagedPyblishPluginMixin, get_instance_staging_dir
+from ayon_batiq.api.frames import existing_frames
 from ayon_batiq.api.headless import HeadlessRenderError, render, rendered_files
 from ayon_batiq.colorspace import to_ocio
 
@@ -18,15 +19,19 @@ class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
         data = instance.data
         write_id = (data.get("transientData") or {}).get("write_node_id")
         if not isinstance(write_id, int) or isinstance(write_id, bool): raise RuntimeError("render instance requires explicit Write node ID")
-        staging = Path(data["stagingDir"]); staging.mkdir(parents=True, exist_ok=True)
-        output = data.get("output", f"{data.get('productName', 'render')}.####.exr")
-        executable = data.get("batiqExecutable") or instance.context.data.get("batiqExecutable")
-        if not executable:
-            raise RuntimeError("BATIQ executable is unavailable from the live host")
         # Render and publish the full range, handles included.
         start = int(data.get("frameStartHandle", data["frameStart"]))
         end = int(data.get("frameEndHandle", data["frameEnd"]))
         step = int(data.get("step", 1))
+        if data.get("renderTarget") == "frames":
+            return self._use_existing_frames(instance, start, end, step)
+        # Core's CollectManagedStagingDir sets this once anatomy data exists.
+        staging = Path(data.get("stagingDir") or get_instance_staging_dir(instance))
+        staging.mkdir(parents=True, exist_ok=True)
+        output = data.get("output", f"{data.get('productName', 'render')}.####.exr")
+        executable = data.get("batiqExecutable") or instance.context.data.get("batiqExecutable")
+        if not executable:
+            raise RuntimeError("BATIQ executable is unavailable from the live host")
         try:
             result = render(
                 executable=executable, project=data["currentFile"], output=str(staging / output),
@@ -37,6 +42,25 @@ class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
             data.pop("representations", None)
             raise RuntimeError(f"BATIQ headless render failed: {exc}") from exc
         files = self._rendered_files(result.get("frame_files") or {}, range(start, end + 1, step), staging)
+        self._add_representation(instance, staging, files, start, end)
+        return result
+
+    def _use_existing_frames(self, instance, start, end, step):
+        """Publish the frames the Write already rendered to its own path."""
+        write_path = instance.data.get("writePath")
+        if not write_path:
+            raise RuntimeError("The Write has no path to take existing frames from")
+        paths, missing = existing_frames(write_path, range(start, end + 1, step))
+        if missing:  # Validate Rendered Frames reports this with a Repair; keep a clear message
+            raise RuntimeError(f"Existing frames are missing at {write_path}: {missing}")
+        folders = {path.parent for path in paths}
+        if len(folders) != 1:
+            raise RuntimeError(f"Existing frames are spread over several folders: {sorted(folders)}")
+        self.log.info(f"Publishing {len(paths)} existing frame(s) from {folders.pop()}")
+        self._add_representation(instance, paths[0].parent, [path.name for path in paths], start, end)
+
+    def _add_representation(self, instance, staging, files, start, end):
+        data = instance.data
         ext = Path(files[0]).suffix.lstrip(".").lower()
         representation = {
             "name": ext,
@@ -51,7 +75,6 @@ class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
         if ocio_name:
             self.set_representation_colorspace(representation, instance.context, colorspace=ocio_name)
         data["representations"] = [representation]
-        return result
 
     def _ocio_colorspace(self, batiq_name, context):
         """The project's OCIO name for the Write colorspace, or None if it has none."""

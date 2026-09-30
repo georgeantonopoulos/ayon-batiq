@@ -1,11 +1,17 @@
 """Write node validators, as in Nuke: node setup, frame range and folder context."""
 import pyblish.api
 from ayon_core.pipeline import registered_host
+from ayon_core.pipeline.colorspace import (
+    get_colorspace_settings_from_publish_context,
+    get_ocio_config_colorspaces,
+)
 from ayon_core.pipeline.publish import (
     OptionalPyblishPluginMixin,
     PublishValidationError,
     RepairAction,
 )
+
+from ayon_batiq.colorspace import to_ocio
 
 WRITE_FAMILIES = ["render", "prerender", "image"]
 # Write parameters compared with the creator's settings (the range has its own validator).
@@ -83,6 +89,10 @@ class ValidateBatiqWrite(pyblish.api.InstancePlugin, OptionalPyblishPluginMixin)
             key: (node.get(key), expected[key]) for key in compared
             if _normalized(key, node.get(key)) != _normalized(key, expected[key])
         }
+        # BATIQ reports its built-in spaces by their own names ("ACEScg" for the
+        # config's "ACES - ACEScg"), so compare colorspaces as the config names them.
+        if "output_space" in wrong and self._same_colorspace(*wrong["output_space"], instance.context):
+            del wrong["output_space"]
         if wrong:
             rows = "\n".join(f"- {LABELS[key]}: Write {have!r}, expected {want!r}"
                              for key, (have, want) in wrong.items())
@@ -95,6 +105,19 @@ class ValidateBatiqWrite(pyblish.api.InstancePlugin, OptionalPyblishPluginMixin)
                     " *batiq/create* again."
                 ),
             )
+
+    @staticmethod
+    def _same_colorspace(have, want, context):
+        try:
+            config_data, _rules = get_colorspace_settings_from_publish_context(context.data)
+        except Exception:  # no colour management data: names must match exactly
+            return False
+        if not config_data or not have or not want:
+            return False
+        colorspaces = get_ocio_config_colorspaces(config_data["path"])["colorspaces"]
+        rules = (context.data.get("project_settings") or {}).get("batiq", {}).get("colorspace", {}).get("rules")
+        mapped = to_ocio(str(have), colorspaces, rules)
+        return mapped is not None and mapped == to_ocio(str(want), colorspaces, rules)
 
     @staticmethod
     def _expected(instance):
@@ -207,4 +230,45 @@ class ValidateBatiqInstanceContext(pyblish.api.InstancePlugin, OptionalPyblishPl
             raise PublishValidationError("Repair needs the Publisher's create context.")
         created["folderPath"] = instance.context.data["folderPath"]
         created["task"] = instance.context.data["task"]
+        instance.context.data["create_context"].save_changes()
+
+
+class ValidateBatiqRenderedFrames(pyblish.api.InstancePlugin):
+    """With *Use existing frames*, every frame to publish is on disk at the Write's path."""
+
+    label = "Validate Rendered Frames"
+    hosts = ["batiq"]
+    families = WRITE_FAMILIES
+    order = pyblish.api.ValidatorOrder
+    actions = [RepairAction]
+
+    def process(self, instance):
+        if instance.data.get("renderTarget") != "frames":
+            return
+        from ayon_batiq.api.frames import existing_frames
+
+        write_path = instance.data.get("writePath")
+        first, last = int(instance.data["frameStartHandle"]), int(instance.data["frameEndHandle"])
+        if not write_path:
+            raise PublishValidationError("The Write has no path to take existing frames from.")
+        _files, missing = existing_frames(write_path, range(first, last + 1, int(instance.data.get("step", 1))))
+        if missing:
+            shown = ", ".join(str(frame) for frame in missing[:20]) + (" ..." if len(missing) > 20 else "")
+            raise PublishValidationError(
+                f"{len(missing)} of {last - first + 1} frame(s) are missing at {write_path}: {shown}",
+                title="Rendered frames are missing",
+                description=(
+                    "### Rendered frames are missing\n\n"
+                    f"*Use existing frames* publishes {first}-{last} from `{write_path}`, but"
+                    f" {len(missing)} frame(s) are not there: {shown}.\n\nRender them in BATIQ, or use"
+                    " **Repair** to switch this instance to *Local machine rendering*."
+                ),
+            )
+
+    @classmethod
+    def repair(cls, instance):
+        _creator, created = _creator_and_instance(instance)
+        if created is None:
+            raise PublishValidationError("Repair needs the Publisher's create context.")
+        created["creator_attributes"]["render_target"] = "local"
         instance.context.data["create_context"].save_changes()

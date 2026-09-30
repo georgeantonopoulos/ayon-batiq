@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.9
+Fixes from the first live publish in BATIQ, and render targets.
+- Publish no longer fails with `KeyError: 'anatomyData'`: the staging directory
+  comes from Core's CollectManagedStagingDir instead of being computed before
+  anatomy data exists.
+- An unsaved workfile is reported by Core's *Validate File Saved* (with its Save
+  action) instead of crashing the Write collector.
+- Review family is set at collection, like Nuke, so ftrack's CollectFtrackFamily
+  sends reviewed renders to ftrack (verified: v002 in ayon_alpha got an ftrack id).
+- Render target on Render/Prerender/Image: *Local machine rendering* or *Use
+  existing frames* (publish what the Write already rendered to its path). New
+  *Validate Rendered Frames* lists missing frames; Repair switches to local.
+- Review intermediates bake in the instance staging dir, never next to the
+  artist's existing frames.
+- *Validate Context Settings* is on the workfile instance, like Nuke's Validate
+  Script Attributes, so its toggle is where artists look for it.
+- *Validate Write Node* compares colorspaces by their name in the project OCIO
+  config: BATIQ reports its built-in ACEScg as "ACEScg" for "ACES - ACEScg".
+
 ## 0.1.8
 - Creators set the Write up like BCN's Nuke creators, from new `batiq/create`
   settings per creator:
