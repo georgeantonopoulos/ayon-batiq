@@ -1,6 +1,6 @@
 name = "batiq"
 title = "BATIQ"
-version = "0.1.8"
+version = "0.1.9"
 app_host_name = "batiq"
 client_dir = "ayon_batiq"
 project_can_override_addon_version = True

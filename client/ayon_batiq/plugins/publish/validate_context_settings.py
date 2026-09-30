@@ -3,7 +3,7 @@ from ayon_core.pipeline import registered_host
 from ayon_core.pipeline.publish import (
     OptionalPyblishPluginMixin,
     PublishValidationError,
-    RepairContextAction,
+    RepairAction,
 )
 
 from ayon_batiq.context import differences, settings_from_attrib
@@ -29,19 +29,25 @@ def _current(info):
     }
 
 
-class ValidateBatiqContextSettings(pyblish.api.ContextPlugin, OptionalPyblishPluginMixin):
-    """BATIQ project frame range, fps and format match the AYON task."""
+class ValidateBatiqContextSettings(pyblish.api.InstancePlugin, OptionalPyblishPluginMixin):
+    """BATIQ project frame range, fps and format match the AYON task.
+
+    On the workfile instance, like Nuke's Validate Script Attributes, so artists
+    find its on/off toggle with the workfile.
+    """
 
     label = "Validate Context Settings"
     hosts = ["batiq"]
+    families = ["workfile"]
     order = pyblish.api.ValidatorOrder
-    actions = [RepairContextAction]
+    actions = [RepairAction]
     settings_category = "batiq"
     optional = True
 
-    def process(self, context):
-        if not self.is_active(context.data):
+    def process(self, instance):
+        if not self.is_active(instance.data):
             return
+        context = instance.context
         task_entity = context.data.get("taskEntity")
         if not task_entity:
             self.log.debug("No task in the publish context; nothing to compare.")
@@ -64,5 +70,5 @@ class ValidateBatiqContextSettings(pyblish.api.ContextPlugin, OptionalPyblishPlu
             )
 
     @classmethod
-    def repair(cls, context):
+    def repair(cls, instance):
         registered_host().apply_context_settings()

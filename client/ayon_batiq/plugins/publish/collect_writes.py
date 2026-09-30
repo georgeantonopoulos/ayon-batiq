@@ -1,7 +1,6 @@
 import pyblish.api
 from pathlib import Path
 from ayon_core.pipeline import registered_host
-from ayon_core.pipeline.publish import get_instance_staging_dir
 
 
 class CollectWrites(pyblish.api.InstancePlugin):
@@ -23,10 +22,8 @@ class CollectWrites(pyblish.api.InstancePlugin):
         node = next((item for item in host.bridge.call("nodes.list") or [] if int(item["id"]) == write_id), None)
         if not node:
             raise RuntimeError("BATIQ Write node no longer exists")
+        # An unsaved workfile is reported by Core's Validate File Saved, with its Save action.
         current_file = host.get_current_workfile()
-        if not current_file:
-            raise RuntimeError("save the BATIQ workfile before publishing")
-        staging = instance.data.get("stagingDir") or get_instance_staging_dir(instance)
         limited = bool(node.get("write_limit_range"))
         output_format = node.get("write_format") or node.get("output_format") or "exr"
         write_path = str(node.get("path") or "")
@@ -60,7 +57,6 @@ class CollectWrites(pyblish.api.InstancePlugin):
             "writeNodeName": node.get("name"),
             "writePath": write_path,
             "currentFile": current_file,
-            "stagingDir": staging,
             "frameStart": frame_start + handle_start,
             "frameEnd": frame_end - handle_end,
             "handleStart": handle_start,
@@ -80,7 +76,15 @@ class CollectWrites(pyblish.api.InstancePlugin):
             "colorspace": node.get("output_space"),
             "writeChannels": node.get("write_channels"),
             "customFrameRange": custom,
+            # local: render now; frames: publish what the Write already rendered.
+            "renderTarget": creator_attributes.get("render_target") or "local",
         })
+        # Like Nuke: the review family is set while collecting, so ftrack's
+        # CollectFtrackFamily and core Extract Review/Burnin pick the instance up.
+        if instance.data["review"]:
+            families = instance.data.setdefault("families", [])
+            if "review" not in families:
+                families.append("review")
 
     @staticmethod
     def _task_range(instance):

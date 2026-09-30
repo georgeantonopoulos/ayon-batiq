@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -188,7 +189,7 @@ class CreatorsTest(unittest.TestCase):
 
     def test_image_limits_write_to_active_frame_and_follows_changes(self):
         _context, (_render, _prerender, image) = self.creators()
-        self.assertEqual(image.get_instance_attr_defs()[0].default, 1001)
+        self.assertEqual({d.key: d for d in image.get_instance_attr_defs()}["active_frame"].default, 1001)
         instance = image.create("imageCompStillFrame", {"variant": "StillFrame", "folderPath": "/assets/shot", "task": "comp"},
                                 {"use_selection": False, "active_frame": 1005})
         params = self.bridge.calls[-1][1]
@@ -433,7 +434,9 @@ class CustomRangeAndValidatorsTest(unittest.TestCase):
 
     def test_custom_range_is_written_collected_and_published_without_handles(self):
         created = self.created()
-        self.assertEqual(self.render.get_instance_attr_defs()[2].default, 993)
+        defs = {d.key: d for d in self.render.get_instance_attr_defs()}
+        self.assertEqual((defs["frame_start"].default, defs["frame_end"].default), (993, 1018))
+        self.assertEqual(defs["render_target"].default, "local")
         created["creator_attributes"]["use_custom_range"] = True
         created["creator_attributes"]["frame_start"] = 1020
         created["creator_attributes"]["frame_end"] = 1030
@@ -517,3 +520,57 @@ class BridgeRangeOrderTest(BridgeDispatchTest):
         self.assertEqual((write["write_first"], write["write_last"]), (993, 1018))
         self.bootstrap.dispatch("nodes.update", {"id": "50", "write_first": 10, "write_last": 20})
         self.assertEqual((write["write_first"], write["write_last"]), (10, 20))
+
+
+class RenderTargetTest(CustomRangeAndValidatorsTest):
+    """Review family at collection, and publishing frames the Write already rendered."""
+
+    def test_review_family_is_collected_so_ftrack_and_extract_review_see_it(self):
+        data = self.publish_instance(self.created()).data
+        self.assertIn("review", data["families"])
+        created = self.created_other()
+        created["creator_attributes"]["review"] = False
+        self.assertNotIn("review", self.publish_instance(created).data.get("families", []))
+
+    def created_other(self):
+        return self.render.create("renderCompOther", {"variant": "Other", "folderPath": "/assets/shot", "task": "comp"}, {})
+
+    def test_frame_path_tokens(self):
+        from ayon_batiq.api.frames import frame_path
+        self.assertEqual(str(frame_path("/r/a.####.exr", 7)), "/r/a.0007.exr")
+        self.assertEqual(str(frame_path("/r/a.%04d.exr", 1001)), "/r/a.1001.exr")
+        self.assertEqual(str(frame_path("/r/still.png", 1005)), "/r/still.png")
+
+    def test_existing_frames_are_published_from_the_write_path(self):
+        from ayon_core.pipeline.publish import PublishValidationError
+        from ayon_batiq.plugins.publish.extract_render import ExtractRender
+        from ayon_batiq.plugins.publish.validate_write import ValidateBatiqRenderedFrames
+        created = self.created()
+        created["creator_attributes"]["render_target"] = "frames"
+        renders = Path(self.dir.name) / "renders"
+        renders.mkdir()
+        node = self.bridge._node(created.transient_data["write_node_id"])
+        node.update(path=str(renders / "renderCompMain.####.exr"), write_first=1001, write_last=1003)
+        instance = self.publish_instance(created)
+        self.assertEqual(instance.data["renderTarget"], "frames")
+        (renders / "renderCompMain.1001.exr").write_bytes(b"x")
+        with self.assertRaisesRegex(PublishValidationError, "2 of 3 frame"):
+            ValidateBatiqRenderedFrames().process(instance)
+        for frame in (1002, 1003):
+            (renders / f"renderCompMain.{frame}.exr").write_bytes(b"x")
+        ValidateBatiqRenderedFrames().process(instance)
+        instance.context.data.update(imageioSettings=({}, None), project_settings={})
+        with patch("ayon_batiq.plugins.publish.extract_render.render") as render, \
+                patch("ayon_batiq.plugins.publish.extract_render.get_colorspace_settings_from_publish_context",
+                      return_value=(None, None)):
+            ExtractRender().process(instance)
+        render.assert_not_called()
+        representation = instance.data["representations"][0]
+        self.assertEqual((representation["stagingDir"], representation["files"]),
+                         (str(renders), ["renderCompMain.1001.exr", "renderCompMain.1002.exr", "renderCompMain.1003.exr"]))
+        ValidateBatiqRenderedFrames.repair(instance)
+        self.assertEqual(created["creator_attributes"]["render_target"], "local")
+
+    def test_review_frames_are_baked_in_the_instance_staging_dir(self):
+        text = (Path(__file__).parents[1] / "client/ayon_batiq/plugins/publish/extract_review_intermediates.py").read_text()
+        self.assertIn('Path(data.get("stagingDir") or source["stagingDir"])', text)

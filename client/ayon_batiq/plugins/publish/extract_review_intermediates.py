@@ -60,7 +60,8 @@ class ExtractReviewIntermediates(pyblish.api.InstancePlugin):
 
         for output in outputs:
             name, extension = output["name"], output["extension"]
-            staging = Path(source["stagingDir"]) / f"review_{name}"
+            # The instance's staging dir, never next to existing frames in the artist's render folder.
+            staging = Path(data.get("stagingDir") or source["stagingDir"]) / f"review_{name}"
             project = review.write_project(
                 data["currentFile"], staging / "review.batiq",
                 write_node=int(data["transientData"]["write_node_id"]),

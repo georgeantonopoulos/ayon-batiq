@@ -138,10 +138,12 @@ class ValidatorAndHookTest(unittest.TestCase):
                 Host.repaired = True
 
         context = SimpleNamespace(data={"taskEntity": {"attrib": ATTRIB}})
+        instance = SimpleNamespace(context=context, data={"productType": "workfile"})
+        self.assertEqual(module.ValidateBatiqContextSettings.families, ["workfile"])
         with patch.object(module, "registered_host", return_value=Host()):
             with self.assertRaises(PublishValidationError) as raised:
-                module.ValidateBatiqContextSettings().process(context)
-            module.ValidateBatiqContextSettings.repair(context)
+                module.ValidateBatiqContextSettings().process(instance)
+            module.ValidateBatiqContextSettings.repair(instance)
         self.assertIn("First frame", str(raised.exception))
         self.assertNotIn("Width", str(raised.exception))
         self.assertTrue(Host.repaired)
