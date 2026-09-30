@@ -2,6 +2,11 @@ import re
 from pathlib import Path
 
 import pyblish.api
+from ayon_core.pipeline.colorspace import (
+    get_colorspace_settings_from_publish_context,
+    get_ocio_config_colorspaces,
+)
+from ayon_core.pipeline.publish import ColormanagedPyblishPluginMixin
 
 from ayon_batiq.api import review
 from ayon_batiq.api.headless import HeadlessRenderError, render, rendered_files
@@ -9,7 +14,11 @@ from ayon_batiq.api.headless import HeadlessRenderError, render, rendered_files
 DISPLAY_EXTENSIONS = {"png", "jpg", "jpeg"}
 
 
-class ExtractReviewIntermediates(pyblish.api.InstancePlugin):
+# The config role naming the display-referred sRGB space (Nuke bakes to it too).
+DISPLAY_ROLE = "color_picking"
+
+
+class ExtractReviewIntermediates(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
     """Bake display-referred review frames for core ExtractReview.
 
     Like Nuke's intermediates, the host makes the review source and core
@@ -89,10 +98,27 @@ class ExtractReviewIntermediates(pyblish.api.InstancePlugin):
                 "fps": data.get("fps"),
             }
             self._tag(representation, output)
+            self._label_display(representation, instance.context)
             representations.append(representation)
             self.log.info(f"Baked {len(baked)} ACES 2.0 review frame(s) as '{name}'.")
         data["representations"] = representations
         self._add_review_family(instance)
+
+    def _label_display(self, representation, context):
+        """Label baked frames with the config's display space, not the EXR's scene-linear one.
+
+        Without this, Core's Extract Colorspace Data gives them the instance's
+        colorspace, and the H.264 made from them would claim to be ACEScg.
+        """
+        try:
+            config_data, _rules = get_colorspace_settings_from_publish_context(context.data)
+        except Exception:
+            config_data = None
+        if not config_data:
+            return
+        role = (get_ocio_config_colorspaces(config_data["path"]).get("roles") or {}).get(DISPLAY_ROLE)
+        if role:
+            self.set_representation_colorspace(representation, context, colorspace=role["colorspace"])
 
     @staticmethod
     def _tag(representation, output):
