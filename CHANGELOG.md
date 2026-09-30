@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.10
+- Thumbnail: new *Extract BATIQ Thumbnail* makes the JPEG from the middle review
+  frame (ACES 2.0 sRGB) as Core would: `thumbnailPath` for the AYON version and a
+  `thumbnail` representation for ftrack. Core's Extract Thumbnail has a hard-coded
+  host list without BATIQ.
+- Review frames are labelled with the config's `color_picking` space (ACES 1.2:
+  `Output - sRGB`), so the H.264 no longer claims to be ACEScg.
+- Verified in the dev bundle: ayon_alpha render_Batiq_Test v004 reached ftrack with
+  EXR, H.264 playable and thumbnail.
+
 ## 0.1.9
 Fixes from the first live publish in BATIQ, and render targets.
 - Publish no longer fails with `KeyError: 'anatomyData'`: the staging directory

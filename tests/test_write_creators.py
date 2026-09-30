@@ -574,3 +574,56 @@ class RenderTargetTest(CustomRangeAndValidatorsTest):
     def test_review_frames_are_baked_in_the_instance_staging_dir(self):
         text = (Path(__file__).parents[1] / "client/ayon_batiq/plugins/publish/extract_review_intermediates.py").read_text()
         self.assertIn('Path(data.get("stagingDir") or source["stagingDir"])', text)
+
+
+class ThumbnailAndReviewLabelTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.staging = Path(self.dir.name)
+
+    def instance(self, representations, settings=None):
+        instance = Mock()
+        instance.context.data = {"project_settings": settings or {}}
+        instance.data = {"stagingDir": str(self.staging), "representations": representations}
+        return instance
+
+    def test_thumbnail_from_middle_review_frame_like_core(self):
+        from ayon_batiq.plugins.publish.extract_thumbnail import ExtractBatiqThumbnail
+        review = {"name": "aces20", "ext": "png", "stagingDir": "/stage/review_aces20",
+                  "files": ["r.1001.png", "r.1002.png", "r.1003.png"], "tags": ["review", "delete"]}
+        instance = self.instance([{"name": "exr", "ext": "exr", "stagingDir": "/stage", "files": ["a.exr"]}, review])
+        with patch("ayon_batiq.plugins.publish.extract_thumbnail.run_subprocess") as run, \
+                patch("ayon_batiq.plugins.publish.extract_thumbnail.get_ffmpeg_tool_args", side_effect=lambda *a: list(a)):
+            ExtractBatiqThumbnail().process(instance)
+        args = run.call_args.args[0]
+        self.assertIn("/stage/review_aces20/r.1002.png", args)
+        thumb = instance.data["representations"][-1]
+        self.assertEqual((thumb["name"], thumb["ext"], thumb["files"], thumb["tags"]),
+                         ("thumbnail", "jpg", "thumbnail.jpg", ["thumbnail", "delete"]))
+        self.assertEqual(instance.data["thumbnailPath"], str(self.staging / "thumbnail.jpg"))
+        # Core's integrate_thumbnail setting keeps it as a published file.
+        instance = self.instance([review], {"core": {"publish": {"ExtractThumbnail": {"integrate_thumbnail": True}}}})
+        with patch("ayon_batiq.plugins.publish.extract_thumbnail.run_subprocess"), \
+                patch("ayon_batiq.plugins.publish.extract_thumbnail.get_ffmpeg_tool_args", side_effect=lambda *a: list(a)):
+            ExtractBatiqThumbnail().process(instance)
+        self.assertEqual(instance.data["representations"][-1]["tags"], ["thumbnail"])
+
+    def test_no_display_frames_means_no_thumbnail(self):
+        from ayon_batiq.plugins.publish.extract_thumbnail import ExtractBatiqThumbnail
+        instance = self.instance([{"name": "exr", "ext": "exr", "stagingDir": "/s", "files": ["a.exr"]}])
+        with patch("ayon_batiq.plugins.publish.extract_thumbnail.run_subprocess") as run:
+            ExtractBatiqThumbnail().process(instance)
+        run.assert_not_called()
+        self.assertNotIn("thumbnailPath", instance.data)
+
+    def test_baked_review_frames_are_labelled_with_the_display_role(self):
+        from ayon_batiq.plugins.publish import extract_review_intermediates as module
+        plugin = module.ExtractReviewIntermediates()
+        representation = {"name": "aces20", "ext": "png"}
+        context = SimpleNamespace(data={})
+        with patch.object(module, "get_colorspace_settings_from_publish_context", return_value=({"path": CONFIG}, None)), \
+                patch.object(module, "get_ocio_config_colorspaces", return_value=OCIO), \
+                patch.object(plugin, "set_representation_colorspace") as label:
+            plugin._label_display(representation, context)
+        self.assertEqual(label.call_args.kwargs["colorspace"], "Output - sRGB")
