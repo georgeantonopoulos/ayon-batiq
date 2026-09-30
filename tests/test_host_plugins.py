@@ -254,6 +254,7 @@ class HostPluginsTest(unittest.TestCase):
         }]
         self.host.get_current_workfile = lambda: "/work/shot.batiq"
         instance = Mock()
+        instance.context.data = {}
         instance.data = {
             "productType": "render", "productName": "beauty",
             "stagingDir": directory.name,

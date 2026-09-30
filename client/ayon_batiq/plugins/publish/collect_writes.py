@@ -38,32 +38,70 @@ class CollectWrites(pyblish.api.InstancePlugin):
         frame_start = int(node.get("write_first") if limited else info.get("frame_start", 1))
         frame_end = int(node.get("write_last") if limited else info.get("frame_end", 1))
         creator_attributes = instance.data.get("creator_attributes") or {}
+        custom = False
         if instance.data["productType"] == "image":
             # A still: the creator's active frame, whatever the Write range says.
             active = creator_attributes.get("active_frame")
             frame_start = frame_end = int(active if active is not None else frame_start)
+        elif creator_attributes.get("use_custom_range"):
+            # The artist's range from the Publisher, rendered and published as is.
+            custom = True
+            frame_start = int(creator_attributes["frame_start"])
+            frame_end = int(creator_attributes["frame_end"])  # checked by Validate Frame Range
+        # A Write covering the task range plus handles publishes the task range with
+        # those handles, as Nuke does; any other range is published as is.
+        handle_start = handle_end = 0
+        task_range = None if instance.data["productType"] == "image" or custom else self._task_range(instance)
+        if task_range and (frame_start, frame_end) == (
+                task_range[0] - task_range[2], task_range[1] + task_range[3]):
+            handle_start, handle_end = task_range[2], task_range[3]
         instance.data.update({
             "writeNodeId": write_id,
             "writeNodeName": node.get("name"),
             "writePath": write_path,
             "currentFile": current_file,
             "stagingDir": staging,
-            "frameStart": frame_start,
-            "frameEnd": frame_end,
-            # The Write range already is the full range; there are no extra handles.
-            "handleStart": 0,
-            "handleEnd": 0,
+            "frameStart": frame_start + handle_start,
+            "frameEnd": frame_end - handle_end,
+            "handleStart": handle_start,
+            "handleEnd": handle_end,
+            # The frames BATIQ renders and publishes.
             "frameStartHandle": frame_start,
             "frameEndHandle": frame_end,
             "fps": info.get("fps") or instance.context.data.get("fps"),
             "resolutionWidth": info.get("resolutionWidth"),
             "resolutionHeight": info.get("resolutionHeight"),
             "pixelAspect": info.get("pixelAspect"),
-            "review": bool(creator_attributes.get("review", instance.data["productType"] == "render")),
+            "review": bool(creator_attributes.get("review", instance.data["productType"] != "image")),
             "step": 1,
             "output": output,
             "outputFormat": output_format,
             "outputColorspace": node.get("output_space"),
             "colorspace": node.get("output_space"),
             "writeChannels": node.get("write_channels"),
+            "customFrameRange": custom,
         })
+
+    @staticmethod
+    def _task_range(instance):
+        """(frameStart, frameEnd, handleStart, handleEnd) of the instance's task, if known."""
+        context = instance.context.data
+        task = context.get("taskEntity") or {}
+        folder = context.get("folderEntity") or {}
+        same = (instance.data.get("folderPath") in (None, folder.get("path"))
+                and instance.data.get("task") in (None, task.get("name")))
+        attrib = task.get("attrib") if same else None
+        project = context.get("projectName")
+        if attrib is None and project and instance.data.get("folderPath") and instance.data.get("task"):
+            try:
+                import ayon_api
+                folder_entity = ayon_api.get_folder_by_path(project, instance.data["folderPath"], fields={"id"})
+                task_entity = folder_entity and ayon_api.get_task_by_name(
+                    project, folder_entity["id"], instance.data["task"], fields={"attrib"})
+                attrib = (task_entity or {}).get("attrib")
+            except Exception:  # no server data: publish the Write range as is
+                attrib = None
+        if not attrib or attrib.get("frameStart") is None or attrib.get("frameEnd") is None:
+            return None
+        return (int(attrib["frameStart"]), int(attrib["frameEnd"]),
+                int(attrib.get("handleStart") or 0), int(attrib.get("handleEnd") or 0))

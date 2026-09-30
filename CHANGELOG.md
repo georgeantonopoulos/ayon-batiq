@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.8
+- Creators set the Write up like BCN's Nuke creators, from new `batiq/create`
+  settings per creator:
+  - render path `{work}/renders/batiq/{product[name]}/{product[name]}.####.{ext}`
+    from the anatomy work directory (Image: one file, no frame number);
+  - file format, data type, EXR compression, channels (Render: EXR half ZIP RGB;
+    Prerender: EXR half ZIP RGBA; Image: PNG 8-bit RGBA). DWAA is not offered:
+    BATIQ 0.2.26 silently writes ZIP instead;
+  - output colorspace from an OCIO role resolved in the project config
+    (Render/Prerender `scene_linear` -> `ACES - ACEScg`, Image `color_picking`
+    -> `Output - sRGB` with the studio ACES 1.2 config);
+  - frame range: the task range with handles, limited on the Write.
+  Changing folder, task or variant in the Publisher moves the path and range.
+- Custom frame range: Render/Prerender instances have *Custom frame range*,
+  *First frame* and *Last frame*; the Write follows and exactly that range is
+  rendered and published (without handles).
+- Publishing reports the task range with its handles (frameStart/End plus
+  handleStart/End) like Nuke when the Write covers task range + handles; the
+  full range is rendered.
+- Validators (optional, with Repair): Validate Write Node (setup matches the
+  creator settings), Validate Frame Range (task range with handles unless a
+  custom range is set), Validate Folder Context (workfile's folder/task).
+- Colour management: new `batiq/imageio` settings (Enable Color Management,
+  file rules). Without them Core treated BATIQ as unmanaged, so publishes carried
+  no colorspace data.
+- Duplicate product names are refused when creating.
+- Bridge: Write path, colorspace, data type, compression and create-directories
+  are settable; range changes are ordered so BATIQ never sees first > last.
+
 ## 0.1.7
 - Publisher: Render, Prerender and Image creators, as in Nuke. Each creates a Write
   node fed by the selected node (or unconnected with Use selection off), placed

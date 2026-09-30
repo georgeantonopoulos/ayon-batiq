@@ -19,6 +19,31 @@ class WorkfileModel(BaseSettingsModel):
     )
 
 
+class ImageIOFileRuleModel(BaseSettingsModel):
+    name: str = SettingsField("", title="Rule name")
+    pattern: str = SettingsField("", title="Regex pattern")
+    colorspace: str = SettingsField("", title="Colorspace name")
+    ext: str = SettingsField("", title="File extension")
+
+
+class ImageIOFileRulesModel(BaseSettingsModel):
+    _isGroup: bool = True
+
+    activate_host_rules: bool = SettingsField(False)
+    rules: list[ImageIOFileRuleModel] = SettingsField(default_factory=list, title="Rules")
+
+
+class ImageIOSettings(BaseSettingsModel):
+    """Core colour management for BATIQ; without it Core treats the host as unmanaged."""
+
+    activate_host_color_management: bool = SettingsField(
+        True, title="Enable Color Management"
+    )
+    file_rules: ImageIOFileRulesModel = SettingsField(
+        default_factory=ImageIOFileRulesModel, title="File Rules"
+    )
+
+
 class ColorspaceRuleModel(BaseSettingsModel):
     batiq_name: str = SettingsField(
         "ACEScg", title="BATIQ colorspace", enum_resolver=batiq_colorspaces_enum
@@ -34,6 +59,74 @@ class ColorspaceModel(BaseSettingsModel):
             "Overrides the built-in mapping between BATIQ colorspaces and names"
             " in the project's OCIO config, for loading and publishing."
         ),
+    )
+
+
+def write_formats_enum():
+    return [
+        {"value": "exr", "label": "OpenEXR"}, {"value": "tif", "label": "TIFF"},
+        {"value": "dpx", "label": "DPX"}, {"value": "png", "label": "PNG"},
+        {"value": "jpeg", "label": "JPEG"},
+    ]
+
+
+def write_datatypes_enum():
+    return [
+        {"value": "half", "label": "16 bit half"}, {"value": "float", "label": "32 bit float"},
+        {"value": "8", "label": "8 bit"}, {"value": "10", "label": "10 bit"},
+        {"value": "16", "label": "16 bit"},
+    ]
+
+
+def write_compressions_enum():
+    # BATIQ 0.2.26 writes these; anything else (e.g. DWAA) silently becomes ZIP.
+    return [
+        {"value": "zip", "label": "ZIP"}, {"value": "piz", "label": "PIZ"},
+        {"value": "rle", "label": "RLE"}, {"value": "none", "label": "None"},
+    ]
+
+
+def write_channels_enum():
+    return ["rgb", "rgba", "all", "alpha"]
+
+
+class WriteNodeModel(BaseSettingsModel):
+    file_format: str = SettingsField("exr", title="File format", enum_resolver=write_formats_enum)
+    datatype: str = SettingsField("half", title="Data type", enum_resolver=write_datatypes_enum)
+    compression: str = SettingsField(
+        "zip", title="EXR compression", enum_resolver=write_compressions_enum
+    )
+    channels: str = SettingsField("rgba", title="Channels", enum_resolver=write_channels_enum)
+    colorspace: str = SettingsField(
+        "scene_linear",
+        title="Colorspace",
+        description=(
+            "An OCIO role (scene_linear, color_picking, ...) or colorspace name,"
+            " resolved in the project's OCIO config."
+        ),
+    )
+
+
+class CreateWriteModel(BaseSettingsModel):
+    enabled: bool = SettingsField(True, title="Enabled")
+    default_variants: list[str] = SettingsField(default_factory=list, title="Default variants")
+    temp_rendering_path_template: str = SettingsField(
+        "", title="Rendering path template",
+        description="Where the Write renders locally. Keys: work, product[name], frame, ext.",
+    )
+    review: bool = SettingsField(True, title="Review by default")
+    write: WriteNodeModel = SettingsField(default_factory=WriteNodeModel, title="Write node")
+
+
+class CreatePluginsModel(BaseSettingsModel):
+    CreateWriteRender: CreateWriteModel = SettingsField(
+        default_factory=CreateWriteModel, title="Render (write)"
+    )
+    CreateWritePrerender: CreateWriteModel = SettingsField(
+        default_factory=CreateWriteModel, title="Prerender (write)"
+    )
+    CreateWriteImage: CreateWriteModel = SettingsField(
+        default_factory=CreateWriteModel, title="Image (write)"
     )
 
 
@@ -99,14 +192,35 @@ class PublishPluginsModel(BaseSettingsModel):
         title="Validate Context Settings",
         description="Frame range, fps, resolution and pixel aspect match the task.",
     )
+    ValidateBatiqWrite: OptionalPluginModel = SettingsField(
+        default_factory=OptionalPluginModel,
+        title="Validate Write Node",
+        description="Format, data type, compression, channels, colorspace and path match the creator.",
+    )
+    ValidateBatiqWriteFrameRange: OptionalPluginModel = SettingsField(
+        default_factory=OptionalPluginModel,
+        title="Validate Frame Range",
+        description="Renders cover the task range with handles, unless a custom range is set.",
+    )
+    ValidateBatiqInstanceContext: OptionalPluginModel = SettingsField(
+        default_factory=OptionalPluginModel,
+        title="Validate Folder Context",
+        description="Instances publish to the workfile's folder and task.",
+    )
 
 
 class BatiqSettings(BaseSettingsModel):
+    imageio: ImageIOSettings = SettingsField(
+        default_factory=ImageIOSettings, title="Color Management (ImageIO)"
+    )
     workfile: WorkfileModel = SettingsField(
         default_factory=WorkfileModel, title="Workfile"
     )
     colorspace: ColorspaceModel = SettingsField(
         default_factory=ColorspaceModel, title="Colorspace"
+    )
+    create: CreatePluginsModel = SettingsField(
+        default_factory=CreatePluginsModel, title="Creator plugins"
     )
     publish: PublishPluginsModel = SettingsField(
         default_factory=PublishPluginsModel, title="Publish plugins"
@@ -114,8 +228,42 @@ class BatiqSettings(BaseSettingsModel):
 
 
 DEFAULT_VALUES: dict[str, Any] = {
+    "imageio": {
+        "activate_host_color_management": True,
+        "file_rules": {"activate_host_rules": False, "rules": []},
+    },
     "workfile": {"apply_context_on_launch": True},
     "colorspace": {"rules": []},
+    # Mirrors BCN's Nuke write creators; DWAA is not available in BATIQ, so ZIP.
+    "create": {
+        "CreateWriteRender": {
+            "enabled": True,
+            "default_variants": ["Main", "Mask"],
+            "temp_rendering_path_template": (
+                "{work}/renders/batiq/{product[name]}/{product[name]}.{frame}.{ext}"),
+            "review": True,
+            "write": {"file_format": "exr", "datatype": "half", "compression": "zip",
+                      "channels": "rgb", "colorspace": "scene_linear"},
+        },
+        "CreateWritePrerender": {
+            "enabled": True,
+            "default_variants": ["MOCKUP", "FLAT", "BG", "CONTAINER", "FG"],
+            "temp_rendering_path_template": (
+                "{work}/renders/batiq/{product[name]}/{product[name]}.{frame}.{ext}"),
+            "review": True,
+            "write": {"file_format": "exr", "datatype": "half", "compression": "zip",
+                      "channels": "rgba", "colorspace": "scene_linear"},
+        },
+        "CreateWriteImage": {
+            "enabled": True,
+            "default_variants": ["StillFrame", "MPFrame", "LayoutFrame"],
+            "temp_rendering_path_template": (
+                "{work}/renders/batiq/{product[name]}/{product[name]}.{ext}"),
+            "review": False,
+            "write": {"file_format": "png", "datatype": "8", "compression": "zip",
+                      "channels": "rgba", "colorspace": "color_picking"},
+        },
+    },
     "publish": {
         "ExtractReviewIntermediates": {
             "enabled": True,
@@ -134,5 +282,8 @@ DEFAULT_VALUES: dict[str, Any] = {
             "optional": True,
             "active": True,
         },
+        "ValidateBatiqWrite": {"enabled": True, "optional": True, "active": True},
+        "ValidateBatiqWriteFrameRange": {"enabled": True, "optional": True, "active": True},
+        "ValidateBatiqInstanceContext": {"enabled": True, "optional": True, "active": True},
     },
 }

@@ -15,9 +15,51 @@ from ayon_batiq.api.host import RemoteBatiqHost
 from ayon_batiq.plugins.create.write_creator import (
     CreateWriteImage, CreateWritePrerender, CreateWriteRender,
 )
+from ayon_core.lib import StringTemplate
+
+from ayon_batiq.plugins.create import write_creator
 from ayon_batiq.plugins.publish.collect_writes import CollectWrites
 
 SETTINGS = {"core": {"tools": {"creator": {"product_name_profiles": []}}}}
+WORK_DIR = "{root[work]}/{project[code]}/work/{hierarchy}/{folder[name]}/{task[name]}/"
+CONFIG = "/mnt/studio/config/ocio/aces_1.2/config.ocio"
+OCIO = {
+    "roles": {"scene_linear": {"colorspace": "ACES - ACEScg"}, "color_picking": {"colorspace": "Output - sRGB"}},
+    "colorspaces": {"ACES - ACEScg": {}, "Output - sRGB": {}, "Utility - sRGB - Texture": {}},
+}
+TASK = {"name": "comp", "taskType": "compositing",
+        "attrib": {"frameStart": 1001, "frameEnd": 1010, "handleStart": 8, "handleEnd": 8}}
+
+
+class Anatomy:
+    templates_obj = SimpleNamespace(frame_padding=4)
+
+    def get_template_item(self, category, name, key):
+        assert (category, name, key) == ("work", "default", "directory")
+        return StringTemplate(WORK_DIR)
+
+
+def template_data(project_name, folder_path, task_name, host_name, settings=None):
+    return {"root": {"work": "/mnt/production/project"}, "project": {"name": project_name, "code": "DEMO"},
+            "hierarchy": "shots/sq01", "folder": {"name": folder_path.rsplit("/", 1)[-1]},
+            "task": {"name": task_name}}
+
+
+def core_fakes(test, config=CONFIG):
+    """Replace Core's anatomy, template data and OCIO lookups for creator tests."""
+    for target, value in (
+        ("get_template_data_with_names", template_data),
+        ("get_imageio_config_preset", lambda *a, **k: {"path": config} if config else {}),
+        ("get_ocio_config_colorspaces", lambda path: OCIO),
+        ("ayon_api", SimpleNamespace(get_folder_by_path=lambda *a, **k: {"id": "folder-id"},
+                                     get_task_by_name=lambda *a, **k: TASK)),
+    ):
+        patcher = patch.object(write_creator, target, value)
+        patcher.start()
+        test.addCleanup(patcher.stop)
+    patcher = patch.object(write_creator.BatiqWriteCreator, "project_anatomy", Anatomy())
+    patcher.start()
+    test.addCleanup(patcher.stop)
 
 
 class Bridge:
@@ -34,7 +76,7 @@ class Bridge:
         if method == "nodes.create_write":
             node = {"id": self.next_id, "kind": "Write", "name": params["name"], "enabled": True,
                     "input": params["input"], "metadata": params.get("metadata", {})}
-            node.update({k: v for k, v in params.items() if k.startswith("write_")})
+            node.update({k: v for k, v in params.items() if k not in ("name", "input", "metadata")})
             self.next_id += 1
             self.nodes.append(node)
             return node
@@ -56,6 +98,7 @@ class Bridge:
 
 class CreateContext:
     host_name = "batiq"
+    headless = False
 
     def __init__(self, host):
         self.host, self.instances = host, []
@@ -63,7 +106,7 @@ class CreateContext:
     def get_current_project_entity(self): return {"name": "Demo"}
     def get_current_project_name(self): return "Demo"
     def get_current_folder_entity(self): return {"name": "shot", "path": "/assets/shot", "folderType": "Shot"}
-    def get_current_task_entity(self): return {"name": "comp", "taskType": "compositing"}
+    def get_current_task_entity(self): return TASK
     def creator_adds_instance(self, instance): self.instances.append(instance)
     def creator_removed_instance(self, instance): self.instances.remove(instance)
     def instance_create_attr_defs_changed(self, instance_id): pass
@@ -83,7 +126,9 @@ class CreatorsTest(unittest.TestCase):
              "metadata": {"ayon_publish": {"creator_identifier": "write", "instance_id": "legacy-id"}}},
         ])
         self.host = RemoteBatiqHost(self.bridge)
+        self.host.get_current_workfile = lambda: "/work/DEMO_sh010_comp_v007.batiq"
         register_host(self.host)
+        core_fakes(self)
 
     def creators(self):
         context = CreateContext(self.host)
@@ -106,20 +151,38 @@ class CreatorsTest(unittest.TestCase):
         self.assertEqual(prerender.collect_instances(), [])
         self.assertEqual(image.collect_instances(), [])
 
-    def test_prerender_creates_write_from_selection_and_is_collected_again(self):
-        context, (_render, prerender, _image) = self.creators()
-        instance = prerender.create("prerenderCompKey01", {"variant": "Key01", "folderPath": "/assets/shot", "task": "comp"}, {"use_selection": True})
+    def test_render_write_is_set_up_like_nukes(self):
+        _context, (render, _prerender, _image) = self.creators()
+        instance = render.create("renderCompMain", {"variant": "Main", "folderPath": "/shots/sq01/sh010", "task": "comp"},
+                                 {"use_selection": True})
         method, params = self.bridge.calls[-1]
         self.assertEqual(method, "nodes.create_write")
+        self.assertEqual((params["name"], params["input"]), ("renderCompMain", 5))
+        self.assertEqual(params["path"], "/mnt/production/project/DEMO/work/shots/sq01/sh010/comp"
+                                         "/renders/batiq/renderCompMain/renderCompMain.####.exr")
+        self.assertEqual({k: params[k] for k in ("write_format", "write_datatype", "write_compression",
+                                                  "write_channels", "output_space", "create_directories")},
+                         {"write_format": "exr", "write_datatype": "half", "write_compression": "zip",
+                          "write_channels": "rgb", "output_space": "ACES - ACEScg", "create_directories": True})
+        # The task's 1001-1010 with 8-frame handles.
+        self.assertEqual((params["write_limit_range"], params["write_first"], params["write_last"]), (True, 993, 1018))
+        self.assertTrue(instance["creator_attributes"]["review"])
+        self.assertEqual(params["metadata"]["ayon_publish"]["creator_identifier"], "create_write_render")
+
+    def test_prerender_creates_write_from_selection_and_is_collected_again(self):
+        context, (_render, prerender, _image) = self.creators()
+        instance = prerender.create("prerenderCompBG", {"variant": "BG", "folderPath": "/assets/shot", "task": "comp"}, {"use_selection": True})
+        params = self.bridge.calls[-1][1]
         self.assertEqual(params["input"], 5)
-        self.assertNotIn("write_limit_range", params)
+        self.assertEqual((params["write_channels"], params["output_space"]), ("rgba", "ACES - ACEScg"))
+        self.assertTrue(params["path"].endswith("/renders/batiq/prerenderCompBG/prerenderCompBG.####.exr"))
         self.assertEqual(instance.product_type, "prerender")
-        self.assertFalse(instance["creator_attributes"]["review"])
+        self.assertTrue(instance["creator_attributes"]["review"])
         write_id = instance.transient_data["write_node_id"]
         # A fresh Publisher session finds it with the same id, and only the Prerender creator does.
         context2 = CreateContext(self.host)
         again = CreateWritePrerender(SETTINGS, context2).collect_instances()
-        self.assertEqual([(i.id, i["variant"]) for i in again], [(instance.id, "Key01")])
+        self.assertEqual([(i.id, i["variant"]) for i in again], [(instance.id, "BG")])
         renders = CreateWriteRender(SETTINGS, context2).collect_instances()
         self.assertNotIn(write_id, {i.transient_data["write_node_id"] for i in renders})
 
@@ -131,10 +194,54 @@ class CreatorsTest(unittest.TestCase):
         params = self.bridge.calls[-1][1]
         self.assertIsNone(params["input"])
         self.assertEqual((params["write_limit_range"], params["write_first"], params["write_last"]), (True, 1005, 1005))
+        self.assertEqual((params["write_format"], params["write_datatype"], params["output_space"]),
+                         ("png", "8", "Output - sRGB"))
+        self.assertTrue(params["path"].endswith("/renders/batiq/imageCompStillFrame/imageCompStillFrame.png"))
         instance["creator_attributes"]["active_frame"] = 1007
-        image.update_instances([(instance, Mock())])
+        image.update_instances([(instance, SimpleNamespace(changed_keys={"creator_attributes"}))])
         node = self.bridge._node(instance.transient_data["write_node_id"])
         self.assertEqual((node["write_first"], node["write_last"]), (1007, 1007))
+
+    def test_context_change_moves_the_render_path(self):
+        _context, (render, _prerender, _image) = self.creators()
+        instance = render.create("renderCompMain", {"variant": "Main", "folderPath": "/assets/shot", "task": "comp"}, {})
+        instance["productName"] = "renderCompBeauty"
+        render.update_instances([(instance, SimpleNamespace(changed_keys={"productName"}))])
+        node = self.bridge._node(instance.transient_data["write_node_id"])
+        self.assertTrue(node["path"].endswith("/renders/batiq/renderCompBeauty/renderCompBeauty.####.exr"))
+        # A comment-only change leaves the Write alone.
+        calls = len(self.bridge.calls)
+        render.update_instances([(instance, SimpleNamespace(changed_keys={"comment"}))])
+        self.assertFalse(any(k.startswith(("write_", "path")) for k in self.bridge.calls[calls][1]))
+
+    def test_settings_override_the_write_and_bad_colorspace_is_reported(self):
+        settings = dict(SETTINGS, batiq={"create": {"CreateWriteRender": {
+            "default_variants": ["Main"], "review": False,
+            "write": {"file_format": "exr", "datatype": "float", "compression": "piz",
+                      "channels": "all", "colorspace": "Utility - sRGB - Texture"}}}})
+        render = CreateWriteRender(settings, CreateContext(self.host))
+        render.create("renderCompMain", {"variant": "Main", "folderPath": "/assets/shot", "task": "comp"}, {})
+        params = self.bridge.calls[-1][1]
+        self.assertEqual((params["write_datatype"], params["write_compression"], params["write_channels"],
+                          params["output_space"]), ("float", "piz", "all", "Utility - sRGB - Texture"))
+        render.write = dict(render.write, colorspace="not_a_role")
+        with self.assertRaisesRegex(CreatorError, "neither a role nor a colorspace"):
+            render.create("renderCompOther", {"variant": "Other", "folderPath": "/assets/shot", "task": "comp"}, {})
+
+    def test_without_colour_management_uses_batiq_builtin_space(self):
+        core_fakes(self, config=None)
+        _context, (render, _prerender, image) = self.creators()
+        render.create("renderCompMain", {"variant": "Main", "folderPath": "/assets/shot", "task": "comp"}, {})
+        self.assertEqual(self.bridge.calls[-1][1]["output_space"], "ACEScg")
+        image.create("imageCompStill", {"variant": "Still", "folderPath": "/assets/shot", "task": "comp"},
+                     {"use_selection": False})
+        self.assertNotIn("output_space", self.bridge.calls[-1][1])
+
+    def test_duplicate_product_name_is_refused(self):
+        context, (render, _prerender, _image) = self.creators()
+        render.create("renderCompMain", {"variant": "Main", "folderPath": "/assets/shot", "task": "comp"}, {})
+        with self.assertRaisesRegex(CreatorError, "already exists"):
+            render.create("renderCompMain", {"variant": "Main", "folderPath": "/assets/shot", "task": "comp"}, {})
 
     def test_render_update_does_not_touch_the_write_range(self):
         _context, (render, _prerender, _image) = self.creators()
@@ -173,12 +280,26 @@ class CollectorTest(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
 
-    def collect(self, product_type, creator_attributes):
+    def collect(self, product_type, creator_attributes, context=None):
         instance = Mock()
+        instance.context.data = context or {}
         instance.data = {"productType": product_type, "productName": product_type, "stagingDir": self.dir.name,
-                         "transientData": {"write_node_id": 9}, "creator_attributes": creator_attributes}
+                         "transientData": {"write_node_id": 9}, "creator_attributes": creator_attributes,
+                         "folderPath": "/assets/shot", "task": "comp"}
         CollectWrites().process(instance)
         return instance.data
+
+    def test_task_range_with_handles_is_published_like_nuke(self):
+        self.bridge.nodes[0].update(write_limit_range=True, write_first=993, write_last=1018)
+        context = {"folderEntity": {"path": "/assets/shot"}, "taskEntity": TASK}
+        data = self.collect("render", {}, context)
+        self.assertEqual((data["frameStart"], data["frameEnd"], data["handleStart"], data["handleEnd"]),
+                         (1001, 1010, 8, 8))
+        self.assertEqual((data["frameStartHandle"], data["frameEndHandle"]), (993, 1018))
+        # A Write limited to some other range publishes that range without handles.
+        self.bridge.nodes[0].update(write_first=1001, write_last=1004)
+        data = self.collect("render", {}, context)
+        self.assertEqual((data["frameStart"], data["frameEnd"], data["handleStart"]), (1001, 1004, 0))
 
     def test_image_publishes_its_active_frame(self):
         data = self.collect("image", {"active_frame": 1004})
@@ -190,6 +311,7 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual((data["frameStart"], data["frameEnd"]), (1001, 1010))
         self.assertFalse(data["review"])
         self.assertTrue(self.collect("render", {})["review"])
+        self.assertTrue(self.collect("prerender", {})["review"])
 
 
 class FakeNode:
@@ -243,12 +365,14 @@ class BridgeDispatchTest(unittest.TestCase):
         self.assertIn("nodes.create_write", ALLOWED_METHODS)
         result = self.bootstrap.dispatch("nodes.create_write", {
             "name": "imageCompStill", "input": 5, "write_limit_range": True, "write_first": 1003,
-            "write_last": 1003, "metadata": {"ayon_publish": {"id": "x"}}, "path": "/ignored",
+            "write_last": 1003, "metadata": {"ayon_publish": {"id": "x"}}, "path": "/renders/still.png",
+            "not_a_write_param": 1,
         })
         node = self.nodes.by_id(result["id"])
         self.assertEqual((node.kind, node.name, node.inputs), ("Write", "imageCompStill", [self.nodes.by_id(5)]))
         self.assertEqual(node.position, (10.0, 40.0 + self.bootstrap.WRITE_OFFSET))
-        self.assertEqual(node.params, {"write_limit_range": True, "write_first": 1003, "write_last": 1003})
+        self.assertEqual(node.params, {"path": "/renders/still.png", "write_limit_range": True,
+                                       "write_first": 1003, "write_last": 1003})
         self.assertEqual(node.metadata["ayon_publish"], {"id": "x"})
         self.assertEqual(self.nodes.selection, [node.id])
 
@@ -267,3 +391,129 @@ class BridgeDispatchTest(unittest.TestCase):
         self.bootstrap.dispatch("nodes.update", {"id": str(write.id), "write_first": 1009, "write_last": 1009,
                                                  "read_first": 1, "metadata": {}})
         self.assertEqual(write.params, {"write_first": 1009, "write_last": 1009})
+
+
+class CustomRangeAndValidatorsTest(unittest.TestCase):
+    """Custom frame ranges and the Write validators, through the real creator and collector."""
+
+    def setUp(self):
+        previous = {k: os.environ.get(k) for k in ("AYON_PROJECT_NAME", "AYON_FOLDER_PATH", "AYON_TASK_NAME")}
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in previous.items()])
+        os.environ.update(AYON_PROJECT_NAME="Demo", AYON_FOLDER_PATH="/assets/shot", AYON_TASK_NAME="comp")
+        self.bridge = Bridge([{"id": 5, "kind": "Grade", "name": "Grade1", "enabled": True, "selected": True}])
+        self.host = RemoteBatiqHost(self.bridge)
+        self.host.get_current_workfile = lambda: "/work/DEMO_sh010_comp_v007.batiq"
+        register_host(self.host)
+        core_fakes(self)
+        self.create_context = CreateContext(self.host)
+        self.create_context.creators = {}
+        self.create_context.get_instance_by_id = lambda iid: next(
+            (i for i in self.create_context.instances if i.id == iid), None)
+        self.create_context.save_changes = Mock()
+        self.render = CreateWriteRender(SETTINGS, self.create_context)
+        self.create_context.creators[self.render.identifier] = self.render
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+    def created(self):
+        return self.render.create("renderCompMain", {"variant": "Main", "folderPath": "/assets/shot", "task": "comp"}, {})
+
+    def publish_instance(self, created):
+        """A pyblish-like instance as CollectFromCreateContext + CollectWrites would build it."""
+        instance = Mock()
+        instance.context.data = {"folderEntity": {"path": "/assets/shot"}, "taskEntity": TASK,
+                                 "folderPath": "/assets/shot", "task": "comp",
+                                 "create_context": self.create_context}
+        instance.data = dict(created.data_to_store(), stagingDir=self.dir.name,
+                             transientData=dict(created.transient_data))
+        instance.data["creator_attributes"] = dict(created["creator_attributes"])
+        CollectWrites().process(instance)
+        return instance
+
+    def test_custom_range_is_written_collected_and_published_without_handles(self):
+        created = self.created()
+        self.assertEqual(self.render.get_instance_attr_defs()[2].default, 993)
+        created["creator_attributes"]["use_custom_range"] = True
+        created["creator_attributes"]["frame_start"] = 1020
+        created["creator_attributes"]["frame_end"] = 1030
+        self.render.update_instances([(created, SimpleNamespace(changed_keys={"creator_attributes"}))])
+        node = self.bridge._node(created.transient_data["write_node_id"])
+        self.assertEqual((node["write_first"], node["write_last"]), (1020, 1030))
+        data = self.publish_instance(created).data
+        self.assertEqual((data["frameStart"], data["frameEnd"], data["handleStart"], data["handleEnd"]),
+                         (1020, 1030, 0, 0))
+        self.assertTrue(data["customFrameRange"])
+
+    def test_write_validator_passes_fails_and_repairs(self):
+        from ayon_core.pipeline.publish import PublishValidationError
+        from ayon_batiq.plugins.publish.validate_write import ValidateBatiqWrite
+        created = self.created()
+        instance = self.publish_instance(created)
+        ValidateBatiqWrite().process(instance)
+        node = self.bridge._node(created.transient_data["write_node_id"])
+        node.update(output_space="ACEScg", write_datatype="float")
+        with self.assertRaisesRegex(PublishValidationError, "Colorspace.*\\n- |Data type"):
+            ValidateBatiqWrite().process(instance)
+        ValidateBatiqWrite.repair(instance)
+        self.assertEqual((node["output_space"], node["write_datatype"]), ("ACES - ACEScg", "half"))
+        ValidateBatiqWrite().process(instance)
+        # A Write made by hand keeps its own settings.
+        instance.data["madeByCreator"] = False
+        node["write_format"] = "png"
+        ValidateBatiqWrite().process(instance)
+
+    def test_frame_range_validator(self):
+        from ayon_core.pipeline.publish import PublishValidationError
+        from ayon_batiq.plugins.publish.validate_write import ValidateBatiqWriteFrameRange
+        created = self.created()
+        ValidateBatiqWriteFrameRange().process(self.publish_instance(created))
+        node = self.bridge._node(created.transient_data["write_node_id"])
+        node.update(write_first=1001, write_last=1004)
+        instance = self.publish_instance(created)
+        with self.assertRaisesRegex(PublishValidationError, "993-1018"):
+            ValidateBatiqWriteFrameRange().process(instance)
+        ValidateBatiqWriteFrameRange.repair(instance)
+        self.assertEqual((node["write_first"], node["write_last"]), (993, 1018))
+        created["creator_attributes"].update({"use_custom_range": True, "frame_start": 1050, "frame_end": 1040})
+        with self.assertRaisesRegex(PublishValidationError, "ends before it starts"):
+            ValidateBatiqWriteFrameRange().process(self.publish_instance(created))
+
+    def test_folder_context_validator(self):
+        from ayon_core.pipeline.publish import PublishValidationError
+        from ayon_batiq.plugins.publish.validate_write import ValidateBatiqInstanceContext
+        created = self.created()
+        instance = self.publish_instance(created)
+        ValidateBatiqInstanceContext().process(instance)
+        instance.data["task"] = "lighting"
+        with self.assertRaisesRegex(PublishValidationError, "lighting"):
+            ValidateBatiqInstanceContext().process(instance)
+        created["task"] = "lighting"
+        ValidateBatiqInstanceContext.repair(instance)
+        self.assertEqual(created["task"], "comp")
+        self.create_context.save_changes.assert_called_once()
+
+
+class StrictWrite(FakeNode):
+    """Refuses a first frame after the last, as BATIQ validates each value it is given."""
+
+    def __init__(self, node_id):
+        super().__init__(node_id, "Write")
+        self.params = {"write_first": 1, "write_last": 100}
+
+    def __setitem__(self, key, value):
+        if key == "write_first" and value > self.params["write_last"]:
+            raise ValueError("write_first after write_last")
+        if key == "write_last" and value < self.params["write_first"]:
+            raise ValueError("write_last before write_first")
+        super().__setitem__(key, value)
+
+
+class BridgeRangeOrderTest(BridgeDispatchTest):
+    def test_moving_the_range_past_its_end_and_back(self):
+        write = StrictWrite(50)
+        self.nodes.items[50] = write
+        self.bootstrap.dispatch("nodes.update", {"id": "50", "write_first": 993, "write_last": 1018})
+        self.assertEqual((write["write_first"], write["write_last"]), (993, 1018))
+        self.bootstrap.dispatch("nodes.update", {"id": "50", "write_first": 10, "write_last": 20})
+        self.assertEqual((write["write_first"], write["write_last"]), (10, 20))
