@@ -23,7 +23,10 @@ class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
         executable = data.get("batiqExecutable") or instance.context.data.get("batiqExecutable")
         if not executable:
             raise RuntimeError("BATIQ executable is unavailable from the live host")
-        start, end, step = int(data["frameStart"]), int(data["frameEnd"]), int(data.get("step", 1))
+        # Render and publish the full range, handles included.
+        start = int(data.get("frameStartHandle", data["frameStart"]))
+        end = int(data.get("frameEndHandle", data["frameEnd"]))
+        step = int(data.get("step", 1))
         try:
             result = render(
                 executable=executable, project=data["currentFile"], output=str(staging / output),

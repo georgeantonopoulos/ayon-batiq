@@ -10,8 +10,11 @@ from ..context import ALL_KEYS, ENV_KEY
 from .bridge_server import BridgeServer
 from .menu import register_menu
 
-# Write parameters the creators may set; paths are left to the headless extractor.
-WRITE_KEYS = ("write_format", "write_limit_range", "write_first", "write_last", "write_channels")
+# Write parameters the creators set (names as in BATIQ 0.2.26's NodeParams).
+WRITE_KEYS = (
+    "path", "output_space", "write_format", "write_datatype", "write_compression",
+    "write_channels", "create_directories", "write_limit_range", "write_first", "write_last",
+)
 # Graph units between a node and the Write created below it.
 WRITE_OFFSET = 120.0
 
@@ -83,10 +86,12 @@ def dispatch(method: str, params: Mapping[str, Any]):
             raise ValueError("node not found")
         if "path" in params:
             node["path"] = params["path"]
-        keys = WRITE_KEYS if node.kind == "Write" else ("read_first", "read_last", "frame_offset", "input_space")
-        for key in keys:
-            if params.get(key) is not None:
-                node[key] = params[key]
+        if node.kind == "Write":
+            _apply_write_params(node, params)
+        else:
+            for key in ("read_first", "read_last", "frame_offset", "input_space"):
+                if params.get(key) is not None:
+                    node[key] = params[key]
         for namespace, data in params.get("metadata", {}).items():
             node.set_metadata(namespace, data)
         return _node(node)
@@ -113,6 +118,8 @@ def dispatch(method: str, params: Mapping[str, Any]):
                 "write_first": node["write_first"] if node.kind == "Write" else None,
                 "write_last": node["write_last"] if node.kind == "Write" else None,
                 "write_channels": node["write_channels"] if node.kind == "Write" else None,
+                "write_datatype": node["write_datatype"] if node.kind == "Write" else None,
+                "write_compression": node["write_compression"] if node.kind == "Write" else None,
             }
             for node in batiq.nodes.all()
         ]
@@ -138,13 +145,24 @@ def _create_write(nodes, params: Mapping[str, Any]):
         node.set_input(0, source)
         x, y = source.position
         node.position = (x, y + WRITE_OFFSET)
-    for key in WRITE_KEYS:
-        if params.get(key) is not None:
-            node[key] = params[key]
+    _apply_write_params(node, params)
     for namespace, data in params.get("metadata", {}).items():
         node.set_metadata(namespace, data)
     nodes.select([node.id])
     return node
+
+
+def _apply_write_params(node, params: Mapping[str, Any]) -> None:
+    """Set the given Write parameters; the range end moves first when the new start is past it."""
+    values = {key: params[key] for key in WRITE_KEYS if params.get(key) is not None}
+    order = [key for key in WRITE_KEYS if key not in ("write_first", "write_last")]
+    if "write_first" in values and values["write_first"] > (node["write_last"] or 0):
+        order += ["write_last", "write_first"]
+    else:
+        order += ["write_first", "write_last"]
+    for key in order:
+        if key in values:
+            node[key] = values[key]
 
 
 def _set_project_settings(project, values: Mapping[str, Any]) -> dict[str, Any]:
