@@ -11,7 +11,7 @@ MAX_MESSAGE_BYTES = 64 * 1024
 ALLOWED_METHODS = frozenset({
     "workfile.get", "workfile.open", "workfile.save", "workfile.modified",
     "project.info", "project.set_settings", "project.get_metadata", "project.set_metadata",
-    "nodes.create_read", "nodes.get", "nodes.update", "nodes.remove", "nodes.list",
+    "nodes.create_read", "nodes.create_write", "nodes.get", "nodes.update", "nodes.remove", "nodes.list",
     "nodes.select", "render.request", "ui.show",
 })
 

@@ -17,7 +17,7 @@ from ayon_core.pipeline import (
 from ayon_batiq.api.host import RemoteBatiqHost
 from ayon_batiq.api.headless import HeadlessRenderError, render as headless_render
 from ayon_batiq.plugins.create.workfile_creator import WorkfileCreator
-from ayon_batiq.plugins.create.write_creator import WriteCreator
+from ayon_batiq.plugins.create.write_creator import CreateWriteRender as WriteCreator
 from ayon_batiq.plugins.inventory.select_containers import SelectInGraph
 from ayon_batiq.plugins.load.load_image import LoadImage
 from ayon_batiq.plugins.publish.extract_render import ExtractRender

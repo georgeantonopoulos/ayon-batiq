@@ -18,7 +18,7 @@ class ExtractReviewIntermediates(pyblish.api.InstancePlugin):
 
     label = "Extract Review Intermediates"
     hosts = ["batiq"]
-    families = ["render"]
+    families = ["render", "prerender"]
     order = pyblish.api.ExtractorOrder + 0.01
     settings_category = "batiq"
 

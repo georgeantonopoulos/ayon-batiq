@@ -10,6 +10,11 @@ from ..context import ALL_KEYS, ENV_KEY
 from .bridge_server import BridgeServer
 from .menu import register_menu
 
+# Write parameters the creators may set; paths are left to the headless extractor.
+WRITE_KEYS = ("write_format", "write_limit_range", "write_first", "write_last", "write_channels")
+# Graph units between a node and the Write created below it.
+WRITE_OFFSET = 120.0
+
 _bridge: BridgeServer | None = None
 _helper: subprocess.Popen[str] | None = None
 
@@ -67,6 +72,8 @@ def dispatch(method: str, params: Mapping[str, Any]):
         for namespace, data in params.get("metadata", {}).items():
             node.set_metadata(namespace, data)
         return _node(node)
+    if method == "nodes.create_write":
+        return _node(_create_write(batiq.nodes, params))
     if method == "nodes.get":
         node = batiq.nodes.by_id(int(params["id"]))
         return _node(node) if node else None
@@ -76,7 +83,8 @@ def dispatch(method: str, params: Mapping[str, Any]):
             raise ValueError("node not found")
         if "path" in params:
             node["path"] = params["path"]
-        for key in ("read_first", "read_last", "frame_offset", "input_space"):
+        keys = WRITE_KEYS if node.kind == "Write" else ("read_first", "read_last", "frame_offset", "input_space")
+        for key in keys:
             if params.get(key) is not None:
                 node[key] = params[key]
         for namespace, data in params.get("metadata", {}).items():
@@ -88,9 +96,11 @@ def dispatch(method: str, params: Mapping[str, Any]):
             raise ValueError("node not found")
         return node.delete()
     if method == "nodes.list":
+        selected = {node.id for node in batiq.nodes.selected()}
         return [
             {
                 **_node(node),
+                "selected": node.id in selected,
                 "metadata": {
                     "ayon": node.get_metadata("ayon"),
                     "ayon_publish": node.get_metadata("ayon_publish"),
@@ -113,6 +123,28 @@ def dispatch(method: str, params: Mapping[str, Any]):
     if method == "render.request":
         raise ValueError("render is handled by the isolated headless extractor")
     raise ValueError("method is not allowed")
+
+
+def _create_write(nodes, params: Mapping[str, Any]):
+    """A Write node fed by ``input`` (a node id) and placed just below it."""
+    source = None
+    if params.get("input") is not None:
+        source = nodes.by_id(int(params["input"]))
+        if source is None:
+            raise ValueError("input node not found")
+    node = nodes.create("Write")
+    node.name = params.get("name", "Write")
+    if source is not None:
+        node.set_input(0, source)
+        x, y = source.position
+        node.position = (x, y + WRITE_OFFSET)
+    for key in WRITE_KEYS:
+        if params.get(key) is not None:
+            node[key] = params[key]
+    for namespace, data in params.get("metadata", {}).items():
+        node.set_metadata(namespace, data)
+    nodes.select([node.id])
+    return node
 
 
 def _set_project_settings(project, values: Mapping[str, Any]) -> dict[str, Any]:

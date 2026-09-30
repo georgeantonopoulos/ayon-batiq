@@ -7,11 +7,11 @@ from ayon_core.pipeline.publish import get_instance_staging_dir
 class CollectWrites(pyblish.api.InstancePlugin):
     label = "Collect BATIQ Write"
     hosts = ["batiq"]
-    families = ["render"]
+    families = ["render", "prerender", "image"]
     order = pyblish.api.CollectorOrder + 0.2
 
     def process(self, instance):
-        if instance.data.get("productType") != "render":
+        if instance.data.get("productType") not in self.families:
             return
         write_id = (instance.data.get("transientData") or {}).get("write_node_id")
         if not isinstance(write_id, int) or isinstance(write_id, bool):
@@ -37,6 +37,11 @@ class CollectWrites(pyblish.api.InstancePlugin):
         )
         frame_start = int(node.get("write_first") if limited else info.get("frame_start", 1))
         frame_end = int(node.get("write_last") if limited else info.get("frame_end", 1))
+        creator_attributes = instance.data.get("creator_attributes") or {}
+        if instance.data["productType"] == "image":
+            # A still: the creator's active frame, whatever the Write range says.
+            active = creator_attributes.get("active_frame")
+            frame_start = frame_end = int(active if active is not None else frame_start)
         instance.data.update({
             "writeNodeId": write_id,
             "writeNodeName": node.get("name"),
@@ -54,7 +59,7 @@ class CollectWrites(pyblish.api.InstancePlugin):
             "resolutionWidth": info.get("resolutionWidth"),
             "resolutionHeight": info.get("resolutionHeight"),
             "pixelAspect": info.get("pixelAspect"),
-            "review": bool((instance.data.get("creator_attributes") or {}).get("review", True)),
+            "review": bool(creator_attributes.get("review", instance.data["productType"] == "render")),
             "step": 1,
             "output": output,
             "outputFormat": output_format,
