@@ -11,7 +11,7 @@ from ayon_batiq.colorspace import to_ocio
 class ExtractRender(pyblish.api.InstancePlugin, ColormanagedPyblishPluginMixin):
     label = "Render BATIQ Write"
     hosts = ["batiq"]
-    families = ["render"]
+    families = ["render", "prerender", "image"]
     order = pyblish.api.ExtractorOrder
 
     def process(self, instance):

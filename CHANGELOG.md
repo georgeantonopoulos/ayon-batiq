@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.7
+- Publisher: Render, Prerender and Image creators, as in Nuke. Each creates a Write
+  node fed by the selected node (or unconnected with Use selection off), placed
+  below it, and named after the product. Default variants match Nuke's.
+- Render and Prerender publish the Write's frame range (the project range unless
+  the Write limits it). Image publishes one frame, the Active frame (default: the
+  project's first frame); changing it in the Publisher updates the Write.
+- Review defaults on for Render, off for Prerender; Image has no review.
+- Plain Write nodes, and Writes published with 0.1.6 or earlier, are still picked up
+  as renders, so existing workfiles publish as before.
+- Removing an instance deletes a Write the creator made; a plain Write is kept and
+  only stops being published.
+- Bridge: new `nodes.create_write`; `nodes.list` reports selection; `nodes.update`
+  sets Write frame-range keys on Write nodes.
+
 ## 0.1.6
 - Review: new `ExtractReviewIntermediates` (like Nuke's) bakes display-referred
   review frames from the rendered EXRs with BATIQ's built-in ACES 2.0 output
