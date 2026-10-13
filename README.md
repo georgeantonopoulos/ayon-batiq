@@ -35,6 +35,17 @@ environment to BATIQ alone.
 - `publish/ExtractReviewIntermediates`: review frames baked by BATIQ with its
   ACES 2.0 output transform (sRGB display, SDR 100 nits).
 
+## Loading
+
+- **Load Image or Movie** makes a Read: EXR, PNG, JPEG and movies, with the
+  version's frame range and handles and its colorspace mapped to BATIQ's.
+- **Load USD into Set** makes a Set (BATIQ's 3D scene node) referencing the
+  published USD (`.usd`, `.usda`, `.usdc`, `.usdz`) or Alembic file, as Nuke's
+  GeoReference loader does. Like Nuke's USD loaders it takes any product type.
+  The Set renders through the scene's first camera unless another is picked.
+  A version update swaps the loaded file (always the Set's first) and keeps
+  any files added after it and the artist's edits to the file's prims.
+
 ## Review
 
 As in the Nuke add-on, the host bakes the review source and core **Extract

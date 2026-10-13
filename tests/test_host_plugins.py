@@ -20,6 +20,7 @@ from ayon_batiq.plugins.create.workfile_creator import WorkfileCreator
 from ayon_batiq.plugins.create.write_creator import CreateWriteRender as WriteCreator
 from ayon_batiq.plugins.inventory.select_containers import SelectInGraph
 from ayon_batiq.plugins.load.load_image import LoadImage
+from ayon_batiq.plugins.load.load_scene import LoadScene
 from ayon_batiq.plugins.publish.extract_render import ExtractRender
 from ayon_batiq.plugins.publish.collect_writes import CollectWrites
 from ayon_batiq.plugins.publish.extract_save_workfile import ExtractSaveWorkfile
@@ -34,6 +35,10 @@ class Bridge:
         self.calls.append((method, params))
         if method == "nodes.create_read":
             node = {"id": 8, "kind": "Read", "metadata": params["metadata"]}
+            self.nodes.append(node)
+            return node
+        if method == "nodes.create_set":
+            node = {"id": 9, "kind": "Set", "metadata": params["metadata"]}
             self.nodes.append(node)
             return node
         if method == "nodes.list":
@@ -95,7 +100,8 @@ class HostPluginsTest(unittest.TestCase):
         register_loader_plugin_path(str(plugins / "load"))
         register_inventory_action_path(str(plugins / "inventory"))
         with patch("ayon_core.pipeline.load.plugins.get_project_settings", return_value={}):
-            self.assertIn("LoadImage", {item.__name__ for item in discover_loader_plugins()})
+            loaders = [item.__name__ for item in discover_loader_plugins()]
+        self.assertEqual((loaders.count("LoadImage"), loaders.count("LoadScene")), (1, 1))
         self.assertIn("SelectInGraph", {item.__name__ for item in discover_inventory_actions()})
         self.assertIsInstance(SelectInGraph(), SelectInGraph)
 
@@ -192,6 +198,27 @@ class HostPluginsTest(unittest.TestCase):
                     patch.object(ExtractRender, "set_representation_colorspace") as set_colorspace:
                 ExtractRender().process(instance)
             set_colorspace.assert_not_called()
+
+    def test_scene_loader_creates_a_set_and_updates_it_to_a_new_version(self):
+        context = {"project": {"name": "Demo"}, "product": {"name": "layoutMain", "productBaseType": "usd"},
+                   "representation": {"id": "rep1", "name": "usd", "context": {"ext": "usd"}}}
+        self.assertTrue(LoadScene.is_compatible_loader(context))
+        self.assertFalse(LoadImage.is_compatible_loader(context))
+        with patch.object(LoadScene, "filepath_from_context", return_value="C:\\show\\layout_v001.usd"):
+            loaded = LoadScene().load(context)
+        method, params = self.bridge.calls[-1]
+        self.assertEqual((method, params["path"], params["name"]), ("nodes.create_set", "C:/show/layout_v001.usd", "layoutMain"))
+        container = self.host.get_containers()[0]
+        self.assertEqual((loaded["id"], container["loader"], container["representation"]), (9, "LoadScene", "rep1"))
+        newer = {**context, "representation": {"id": "rep2", "name": "usd", "context": {"ext": "usd"}}}
+        with patch.object(LoadScene, "filepath_from_context", return_value="/show/layout_v002.usd"):
+            LoadScene().update(container, newer)
+        method, params = self.bridge.calls[-1]
+        self.assertEqual((method, params["id"], params["path"]), ("nodes.update", "9", "/show/layout_v002.usd"))
+        self.assertEqual(self.host.get_containers()[0]["representation"], "rep2")
+        with patch.object(LoadScene, "filepath_from_context", return_value="/show/plate.exr"), \
+                self.assertRaisesRegex(ValueError, "unsupported scene"):
+            LoadScene().load(context)
 
     def test_loader_places_movies_and_sequences_with_handles_and_maps_colorspace(self):
         version = {"attrib": {"frameStart": 1001, "frameEnd": 1100, "handleStart": 8, "handleEnd": 8}}

@@ -2,10 +2,10 @@ from __future__ import annotations
 from typing import Any
 from pathlib import Path
 
-from ayon_core.pipeline import AVALON_CONTAINER_ID, registered_host
 from ayon_core.pipeline.load import LoaderPlugin
 from ayon_core.settings import get_project_settings
 
+from ayon_batiq.api.loading import bridge, container_metadata, updated_metadata
 from ayon_batiq.colorspace import to_batiq
 
 # Formats BATIQ 0.2.26's Read decodes (checked with headless renders; TIFF and DPX fail).
@@ -24,9 +24,6 @@ class LoadImage(LoaderPlugin):
         if not path or Path(path).suffix.lower().lstrip(".") not in self.extensions:
             raise ValueError("unsupported image representation")
         return str(path)
-    def _metadata(self, context, name, namespace=None):
-        representation = context.get("representation", {})
-        return {"schema":"ayon:container-3.0", "id":AVALON_CONTAINER_ID, "name":name, "namespace":namespace or context.get("namespace", ""), "loader":"LoadImage", "representation":str(representation.get("id", "")), "project_name":context.get("project", {}).get("name", "")}
     @staticmethod
     def _frame_range(context):
         """First and last frame including handles, from the version or representation."""
@@ -69,21 +66,15 @@ class LoadImage(LoaderPlugin):
         return params
     def load(self, context, name=None, namespace=None, options=None):
         path = self._path(context); name = name or context.get("product", {}).get("name", "image")
-        params = {"path":path, "name":name, "metadata":{"ayon":self._metadata(context, name, namespace)}}
+        params = {"path":path, "name":name, "metadata":{"ayon":container_metadata(context, name, namespace, "LoadImage")}}
         params.update(self._read_params(context, path))
         return self._bridge().call("nodes.create_read", params)
     def update(self, container, context):
-        representation = context["representation"]
         path = self._path(context); node_id = str(container["objectName"])
-        data = dict(container); data["representation"] = str(representation.get("id", "")); data.pop("objectName", None); data.pop("_node", None)
-        params = {"id":node_id, "path":path, "metadata":{"ayon":data}}
+        params = {"id":node_id, "path":path, "metadata":{"ayon":updated_metadata(container, context)}}
         params.update(self._read_params(context, path))
         return self._bridge().call("nodes.update", params)
     def switch(self, container, context): return self.update(container, context)
     def remove(self, container): return self._bridge().call("nodes.remove", {"id":str(container["objectName"])})
     @staticmethod
-    def _bridge():
-        host = registered_host()
-        if host is None or not hasattr(host, "bridge"):
-            raise RuntimeError("BATIQ host bridge is unavailable")
-        return host.bridge
+    def _bridge(): return bridge()

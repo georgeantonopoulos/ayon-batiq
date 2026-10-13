@@ -394,6 +394,24 @@ class BridgeDispatchTest(unittest.TestCase):
         self.assertEqual(write.params, {"write_first": 1009, "write_last": 1009})
 
 
+    def test_create_set_references_the_scene_and_update_swaps_only_the_loaded_file(self):
+        from ayon_batiq.startup.bridge_server import ALLOWED_METHODS
+        self.assertIn("nodes.create_set", ALLOWED_METHODS)
+        result = self.bootstrap.dispatch("nodes.create_set", {
+            "name": "layoutMain", "path": "/show/layout_v001.usd", "metadata": {"ayon": {"loader": "LoadScene"}}})
+        node = self.nodes.by_id(result["id"])
+        self.assertEqual((node.kind, node.name, node.params), ("Set", "layoutMain", {"set.files": ["/show/layout_v001.usd"]}))
+        self.assertEqual(node.metadata["ayon"], {"loader": "LoadScene"})
+        self.assertEqual(self.nodes.selection, [node.id])
+        # A file the artist added after loading stays; read/write keys are not Set parameters.
+        node["set.files"] = ["/show/layout_v001.usd", "/local/extra.usda"]
+        self.bootstrap.dispatch("nodes.update", {"id": str(node.id), "path": "/show/layout_v002.usd", "read_first": 1})
+        self.assertEqual(node.params, {"set.files": ["/show/layout_v002.usd", "/local/extra.usda"]})
+        listed = {n["id"]: n for n in self.bootstrap.dispatch("nodes.list", {})}
+        self.assertEqual(listed[node.id]["path"], "/show/layout_v002.usd")
+        self.assertIsNone(listed[5]["path"])
+
+
 class CustomRangeAndValidatorsTest(unittest.TestCase):
     """Custom frame ranges and the Write validators, through the real creator and collector."""
 

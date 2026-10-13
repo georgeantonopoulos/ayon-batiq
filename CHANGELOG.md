@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- *Load USD into Set*: USD and Alembic products load into a BATIQ Set, as Nuke's
+  GeoReference loader does, and update to a new version in place. The bridge
+  gains `nodes.create_set`.
+
 ## 0.1.10
 - Thumbnail: new *Extract BATIQ Thumbnail* makes the JPEG from the middle review
   frame (ACES 2.0 sRGB) as Core would: `thumbnailPath` for the AYON version and a

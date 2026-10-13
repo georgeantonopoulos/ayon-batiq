@@ -75,6 +75,14 @@ def dispatch(method: str, params: Mapping[str, Any]):
         for namespace, data in params.get("metadata", {}).items():
             node.set_metadata(namespace, data)
         return _node(node)
+    if method == "nodes.create_set":
+        node = batiq.nodes.create("Set")
+        node.name = params.get("name", "Set")
+        node["set.files"] = [params["path"]]
+        for namespace, data in params.get("metadata", {}).items():
+            node.set_metadata(namespace, data)
+        batiq.nodes.select([node.id])
+        return _node(node)
     if method == "nodes.create_write":
         return _node(_create_write(batiq.nodes, params))
     if method == "nodes.get":
@@ -84,11 +92,14 @@ def dispatch(method: str, params: Mapping[str, Any]):
         node = batiq.nodes.by_id(int(params["id"]))
         if node is None:
             raise ValueError("node not found")
-        if "path" in params:
+        if node.kind == "Set":
+            if "path" in params:
+                node["set.files"] = _set_files(node["set.files"], params["path"])
+        elif "path" in params:
             node["path"] = params["path"]
         if node.kind == "Write":
             _apply_write_params(node, params)
-        else:
+        elif node.kind == "Read":
             for key in ("read_first", "read_last", "frame_offset", "input_space"):
                 if params.get(key) is not None:
                     node[key] = params[key]
@@ -110,7 +121,7 @@ def dispatch(method: str, params: Mapping[str, Any]):
                     "ayon": node.get_metadata("ayon"),
                     "ayon_publish": node.get_metadata("ayon_publish"),
                 },
-                "path": node["path"] if node.kind in {"Read", "Write"} else None,
+                "path": _node_path(node),
                 "output_format": node["output_format"] if node.kind == "Write" else None,
                 "write_format": node["write_format"] if node.kind == "Write" else None,
                 "output_space": node["output_space"] if node.kind == "Write" else None,
@@ -130,6 +141,25 @@ def dispatch(method: str, params: Mapping[str, Any]):
     if method == "render.request":
         raise ValueError("render is handled by the isolated headless extractor")
     raise ValueError("method is not allowed")
+
+
+def _set_files(files, path: str) -> list[str]:
+    """A Set's files with the loaded one (always the first) swapped for ``path``.
+
+    Files the artist added after it stay as they are.
+    """
+    files = list(files or [])
+    return [path, *files[1:]]
+
+
+def _node_path(node):
+    """The file a Read or Write points at, or the file a Set was loaded with."""
+    if node.kind in {"Read", "Write"}:
+        return node["path"]
+    if node.kind == "Set":
+        files = node["set.files"] or []
+        return files[0] if files else None
+    return None
 
 
 def _create_write(nodes, params: Mapping[str, Any]):
