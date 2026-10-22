@@ -5,7 +5,7 @@ from pathlib import Path
 from ayon_core.pipeline.load import LoaderPlugin
 from ayon_core.settings import get_project_settings
 
-from ayon_batiq.api.loading import bridge, container_metadata, updated_metadata
+from ayon_batiq.api.loading import bridge, container_metadata, frame_range, normalize_path, updated_metadata
 from ayon_batiq.colorspace import to_batiq
 
 # Formats BATIQ 0.2.26's Read decodes (checked with headless renders; TIFF and DPX fail).
@@ -23,22 +23,9 @@ class LoadImage(LoaderPlugin):
         path = self.filepath_from_context(context)
         if not path or Path(path).suffix.lower().lstrip(".") not in self.extensions:
             raise ValueError("unsupported image representation")
-        return str(path)
+        return normalize_path(path)
     @staticmethod
-    def _frame_range(context):
-        """First and last frame including handles, from the version or representation."""
-        representation = context.get("representation", {})
-        sources = (
-            context.get("version", {}).get("attrib", {}),
-            representation.get("context", {}),
-            representation.get("attrib", {}),
-        )
-        def value(key):
-            return next((source[key] for source in sources if source.get(key) is not None), None)
-        start, end = value("frameStart"), value("frameEnd")
-        if start is None or end is None:
-            return None, None
-        return int(start) - int(value("handleStart") or 0), int(end) + int(value("handleEnd") or 0)
+    def _frame_range(context): return frame_range(context)
     @staticmethod
     def _source_colorspace(representation):
         data = representation.get("data", {})

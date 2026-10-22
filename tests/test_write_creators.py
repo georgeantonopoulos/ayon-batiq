@@ -411,6 +411,27 @@ class BridgeDispatchTest(unittest.TestCase):
         self.assertEqual(listed[node.id]["path"], "/show/layout_v002.usd")
         self.assertIsNone(listed[5]["path"])
 
+    def test_set_update_swaps_the_recorded_file_wherever_the_artist_moved_it(self):
+        result = self.bootstrap.dispatch("nodes.create_set", {
+            "name": "layoutMain", "path": "/show/layout_v001.usd",
+            "metadata": {"ayon": {"loader": "LoadScene", "path": "/show/layout_v001.usd"}}})
+        node = self.nodes.by_id(result["id"])
+        # The artist put their own file first: it stays, and listing still reports the loaded file.
+        node["set.files"] = ["/local/extra.usda", "/show/layout_v001.usd"]
+        listed = {n["id"]: n for n in self.bootstrap.dispatch("nodes.list", {})}
+        self.assertEqual(listed[node.id]["path"], "/show/layout_v001.usd")
+        self.bootstrap.dispatch("nodes.update", {
+            "id": str(node.id), "path": "/show/layout_v002.usd", "previous_path": "/show/layout_v001.usd",
+            "metadata": {"ayon": {"loader": "LoadScene", "path": "/show/layout_v002.usd"}}})
+        self.assertEqual(node["set.files"], ["/local/extra.usda", "/show/layout_v002.usd"])
+        listed = {n["id"]: n for n in self.bootstrap.dispatch("nodes.list", {})}
+        self.assertEqual(listed[node.id]["path"], "/show/layout_v002.usd")
+        # The artist removed the loaded file: the new version goes back in first.
+        node["set.files"] = ["/local/extra.usda"]
+        self.bootstrap.dispatch("nodes.update", {
+            "id": str(node.id), "path": "/show/layout_v003.usd", "previous_path": "/show/layout_v002.usd"})
+        self.assertEqual(node["set.files"], ["/show/layout_v003.usd", "/local/extra.usda"])
+
 
 class CustomRangeAndValidatorsTest(unittest.TestCase):
     """Custom frame ranges and the Write validators, through the real creator and collector."""

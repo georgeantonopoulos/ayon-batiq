@@ -317,8 +317,8 @@ class CreateWritePrerender(BatiqWriteCreator):
     label = "Prerender (write)"
     product_base_type = product_type = "prerender"
     description = "Render the task's frame range as an intermediate for other comps."
-    default_variants = ["MOCKUP", "FLAT", "BG", "CONTAINER", "FG"]
-    default_variant = "MOCKUP"
+    default_variants = ["Key01", "Bg01", "Fg01", "Branch01", "Part01"]
+    default_variant = "Key01"
 
 
 class CreateWriteImage(BatiqWriteCreator):

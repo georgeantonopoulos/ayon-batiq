@@ -247,7 +247,7 @@ DEFAULT_VALUES: dict[str, Any] = {
         },
         "CreateWritePrerender": {
             "enabled": True,
-            "default_variants": ["MOCKUP", "FLAT", "BG", "CONTAINER", "FG"],
+            "default_variants": ["Key01", "Bg01", "Fg01", "Branch01", "Part01"],
             "temp_rendering_path_template": (
                 "{work}/renders/batiq/{product[name]}/{product[name]}.{frame}.{ext}"),
             "review": True,

@@ -1,6 +1,6 @@
 # AYON-BATIQ
 
-AYON-BATIQ 0.1.10 is the separately installed AYON host add-on for BATIQ. It is
+AYON-BATIQ 0.1.13 is the separately installed AYON host add-on for BATIQ. It is
 not bundled into BATIQ: without this add-on, BATIQ keeps its generic embedded
 `import batiq` API and starts with no AYON menus, Qt process, or AYON imports.
 
@@ -14,7 +14,7 @@ python create_package.py
 
 This uses AYON's standard package workflow and writes the server-installable
 archive under `package/`. In AYON Server, open **Studio Settings → Bundles →
-Install addon**, choose that archive, then enable BATIQ 0.1.10 in a bundle.
+Install addon**, choose that archive, then enable BATIQ 0.1.13 in a bundle.
 
 The add-on requires AYON Server `>=1.8.4,<2.0.0`, AYON Core
 `>=1.9.10`, and
@@ -43,8 +43,10 @@ environment to BATIQ alone.
   published USD (`.usd`, `.usda`, `.usdc`, `.usdz`) or Alembic file, as Nuke's
   GeoReference loader does. Like Nuke's USD loaders it takes any product type.
   The Set renders through the scene's first camera unless another is picked.
-  A version update swaps the loaded file (always the Set's first) and keeps
-  any files added after it and the artist's edits to the file's prims.
+  A version update swaps the file it loaded, wherever it sits in the Set's
+  list, and keeps any other files and the artist's edits to the file's prims.
+  The Set reads the file at the project frame (BATIQ has no offset for it), so
+  the version's frame range and fps are only recorded on the container.
 
 ## Review
 
@@ -68,7 +70,7 @@ PYTHONPATH=.:client:<ayon-core>/client:<dependencies> python -m pytest tests
 ## Development mode
 
 1. Run `python create_package.py` once and install the generated ZIP on AYON Server.
-2. Add and enable BATIQ 0.1.10 in a development bundle.
+2. Add and enable BATIQ 0.1.13 in a development bundle.
 3. Enable the add-on custom path and point its client path at `<path-to-ayon-batiq>/client`.
 4. Start AYON Launcher with that development bundle (or `--use-dev`).
 5. Launch the configured BATIQ application.

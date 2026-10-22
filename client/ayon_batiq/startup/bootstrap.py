@@ -94,7 +94,7 @@ def dispatch(method: str, params: Mapping[str, Any]):
             raise ValueError("node not found")
         if node.kind == "Set":
             if "path" in params:
-                node["set.files"] = _set_files(node["set.files"], params["path"])
+                node["set.files"] = _set_files(node["set.files"], params["path"], params.get("previous_path"))
         elif "path" in params:
             node["path"] = params["path"]
         if node.kind == "Write":
@@ -143,21 +143,31 @@ def dispatch(method: str, params: Mapping[str, Any]):
     raise ValueError("method is not allowed")
 
 
-def _set_files(files, path: str) -> list[str]:
-    """A Set's files with the loaded one (always the first) swapped for ``path``.
+def _set_files(files, path: str, previous: str | None = None) -> list[str]:
+    """A Set's files with the loaded one swapped for ``path``.
 
-    Files the artist added after it stay as they are.
+    The loaded file is ``previous`` wherever the artist moved it in the list, or
+    the first file for a container that did not record it. When the artist
+    removed it, ``path`` goes back in first. Every other file stays as it is.
     """
     files = list(files or [])
-    return [path, *files[1:]]
+    if previous is None:
+        return [path, *files[1:]]
+    if previous in files:
+        files[files.index(previous)] = path
+        return files
+    return [path, *files]
 
 
 def _node_path(node):
-    """The file a Read or Write points at, or the file a Set was loaded with."""
+    """The file a Read or Write points at, or the file a Set was loaded with (else its first)."""
     if node.kind in {"Read", "Write"}:
         return node["path"]
     if node.kind == "Set":
-        files = node["set.files"] or []
+        files = list(node["set.files"] or [])
+        loaded = (node.get_metadata("ayon") or {}).get("path")
+        if loaded in files:
+            return loaded
         return files[0] if files else None
     return None
 

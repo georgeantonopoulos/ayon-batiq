@@ -84,5 +84,5 @@ It renders that project headless, so BATIQ's built-in ACES 2.0 output transform
 bakes the frames. Core Extract Review then encodes them from its profiles.
 Keeping the colour transform inside BATIQ means the review shows what the
 artist saw, and BATIQ needs no OCIO config for it. Published EXRs keep
-colorspace names from the studio OCIO config (for example ACES 1.2), so Nuke and
-other ACES 1.2 hosts read them correctly.
+colorspace names from the project OCIO config (for example ACES 1.2), so Nuke
+and other hosts on that config read them correctly.

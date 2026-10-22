@@ -1,4 +1,4 @@
-"""Helpers the BATIQ loaders share: the container record and the host bridge."""
+"""Helpers the BATIQ loaders share: the container record, frame range, paths and the host bridge."""
 from __future__ import annotations
 
 from typing import Any
@@ -24,6 +24,29 @@ def updated_metadata(container: dict[str, Any], context: dict[str, Any]) -> dict
     data.pop("objectName", None)
     data.pop("_node", None)
     return data
+
+
+def frame_range(context: dict[str, Any]) -> tuple[int | None, int | None]:
+    """First and last frame including handles, from the version or representation."""
+    representation = context.get("representation", {})
+    sources = (
+        context.get("version", {}).get("attrib", {}),
+        representation.get("context", {}),
+        representation.get("attrib", {}),
+    )
+
+    def value(key):
+        return next((source[key] for source in sources if source.get(key) is not None), None)
+
+    start, end = value("frameStart"), value("frameEnd")
+    if start is None or end is None:
+        return None, None
+    return int(start) - int(value("handleStart") or 0), int(end) + int(value("handleEnd") or 0)
+
+
+def normalize_path(path: str) -> str:
+    """The path with forward slashes, which BATIQ reads on every platform."""
+    return str(path).replace("\\", "/")
 
 
 def bridge():

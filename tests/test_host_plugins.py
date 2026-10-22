@@ -200,7 +200,8 @@ class HostPluginsTest(unittest.TestCase):
             set_colorspace.assert_not_called()
 
     def test_scene_loader_creates_a_set_and_updates_it_to_a_new_version(self):
-        context = {"project": {"name": "Demo"}, "product": {"name": "layoutMain", "productBaseType": "usd"},
+        version = {"version": 1, "attrib": {"frameStart": 1001, "frameEnd": 1100, "handleStart": 8, "handleEnd": 8, "fps": 25.0}}
+        context = {"project": {"name": "Demo"}, "product": {"name": "layoutMain", "productBaseType": "usd"}, "version": version,
                    "representation": {"id": "rep1", "name": "usd", "context": {"ext": "usd"}}}
         self.assertTrue(LoadScene.is_compatible_loader(context))
         self.assertFalse(LoadImage.is_compatible_loader(context))
@@ -210,12 +211,19 @@ class HostPluginsTest(unittest.TestCase):
         self.assertEqual((method, params["path"], params["name"]), ("nodes.create_set", "C:/show/layout_v001.usd", "layoutMain"))
         container = self.host.get_containers()[0]
         self.assertEqual((loaded["id"], container["loader"], container["representation"]), (9, "LoadScene", "rep1"))
-        newer = {**context, "representation": {"id": "rep2", "name": "usd", "context": {"ext": "usd"}}}
+        # Like Nuke's Alembic loader: the loaded file, frame range with handles, fps and version on the container.
+        self.assertEqual({key: container[key] for key in ("path", "frameStart", "frameEnd", "fps", "version")},
+                         {"path": "C:/show/layout_v001.usd", "frameStart": 993, "frameEnd": 1108, "fps": 25.0, "version": 1})
+        newer = {**context, "version": {"version": 2, "attrib": {"frameStart": 1001, "frameEnd": 1120, "fps": 25.0}},
+                 "representation": {"id": "rep2", "name": "usd", "context": {"ext": "usd"}}}
         with patch.object(LoadScene, "filepath_from_context", return_value="/show/layout_v002.usd"):
             LoadScene().update(container, newer)
         method, params = self.bridge.calls[-1]
-        self.assertEqual((method, params["id"], params["path"]), ("nodes.update", "9", "/show/layout_v002.usd"))
-        self.assertEqual(self.host.get_containers()[0]["representation"], "rep2")
+        self.assertEqual((method, params["id"], params["path"], params["previous_path"]),
+                         ("nodes.update", "9", "/show/layout_v002.usd", "C:/show/layout_v001.usd"))
+        updated = self.host.get_containers()[0]
+        self.assertEqual((updated["representation"], updated["path"], updated["frameEnd"], updated["version"]),
+                         ("rep2", "/show/layout_v002.usd", 1120, 2))
         with patch.object(LoadScene, "filepath_from_context", return_value="/show/plate.exr"), \
                 self.assertRaisesRegex(ValueError, "unsupported scene"):
             LoadScene().load(context)
