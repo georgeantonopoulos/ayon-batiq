@@ -148,15 +148,40 @@ def _set_files(files, path: str, previous: str | None = None) -> list[str]:
 
     The loaded file is ``previous`` wherever the artist moved it in the list, or
     the first file for a container that did not record it. When the artist
-    removed it, ``path`` goes back in first. Every other file stays as it is.
+    removed it, ``path`` goes back in first. If the artist already added
+    ``path``, that entry stays and the loaded one goes. Every other file stays
+    as it is.
     """
     files = list(files or [])
-    if previous is None:
-        return [path, *files[1:]]
-    if previous in files:
-        files[files.index(previous)] = path
+    index = (0 if files else None) if previous is None else _file_index(files, previous)
+    present = next((i for i, file in enumerate(files) if _slashes(file) == _slashes(path)), None)
+    if present is not None:
+        if index is not None and index != present:
+            del files[index]
         return files
-    return [path, *files]
+    if index is None:
+        return [path, *files]
+    files[index] = path
+    return files
+
+
+def _file_index(files: list[str], path: str) -> int | None:
+    """Where ``path`` sits in ``files``: the same path with either slash, else the one file with its name.
+
+    The name covers a project opened with other roots or collected elsewhere,
+    where BATIQ resolves the file to a different path than the container recorded.
+    """
+    wanted = _slashes(path)
+    for i, file in enumerate(files):
+        if _slashes(file) == wanted:
+            return i
+    name = wanted.rsplit("/", 1)[-1]
+    named = [i for i, file in enumerate(files) if _slashes(file).rsplit("/", 1)[-1] == name]
+    return named[0] if len(named) == 1 else None
+
+
+def _slashes(path) -> str:
+    return str(path).replace("\\", "/")
 
 
 def _node_path(node):
@@ -166,8 +191,9 @@ def _node_path(node):
     if node.kind == "Set":
         files = list(node["set.files"] or [])
         loaded = (node.get_metadata("ayon") or {}).get("path")
-        if loaded in files:
-            return loaded
+        index = _file_index(files, loaded) if loaded else None
+        if index is not None:
+            return files[index]
         return files[0] if files else None
     return None
 

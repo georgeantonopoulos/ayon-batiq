@@ -8,6 +8,10 @@
 - A version update swaps the file this container loaded, wherever the artist
   moved it in the Set's list, and keeps every other file and the prim edits. If
   the artist removed it, the new version goes back in first.
+- The loaded file is found with either slash, or by its name when the project
+  was opened with other roots or collected elsewhere (only when one file has that
+  name), so no stale entry stays. If the artist already added the new version,
+  that entry stays and the old one goes, so it is never listed twice.
 - The container records the loaded file, the version's frame range (with
   handles), fps and number, as Nuke's Alembic loader does. A Set reads the file
   at the project frame and has no offset or range parameters (checked with

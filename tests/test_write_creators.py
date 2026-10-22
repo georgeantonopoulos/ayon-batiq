@@ -432,6 +432,31 @@ class BridgeDispatchTest(unittest.TestCase):
             "id": str(node.id), "path": "/show/layout_v003.usd", "previous_path": "/show/layout_v002.usd"})
         self.assertEqual(node["set.files"], ["/show/layout_v003.usd", "/local/extra.usda"])
 
+    def test_set_update_finds_the_loaded_file_by_slash_or_name_and_never_duplicates(self):
+        result = self.bootstrap.dispatch("nodes.create_set", {"name": "layoutMain", "path": "/show/layout_v001.usd"})
+        node = self.nodes.by_id(result["id"])
+
+        def update(files, path, previous):
+            node["set.files"] = files
+            self.bootstrap.dispatch("nodes.update", {"id": str(node.id), "path": path, "previous_path": previous})
+            return node["set.files"]
+
+        # BATIQ holds the file with backslashes: still the loaded one.
+        self.assertEqual(update(["/local/extra.usda", "P:\\show\\layout_v001.usd"], "P:/show/layout_v002.usd",
+                                "P:/show/layout_v001.usd"), ["/local/extra.usda", "P:/show/layout_v002.usd"])
+        # Opened with other roots: the one file with the loaded name is swapped, nothing stale stays.
+        self.assertEqual(update(["/mnt/show/layout_v001.usd", "/local/extra.usda"], "P:/show/layout_v002.usd",
+                                "P:/show/layout_v001.usd"), ["P:/show/layout_v002.usd", "/local/extra.usda"])
+        # Two files share that name: not guessed, the new version goes in first.
+        self.assertEqual(update(["/a/layout_v001.usd", "/b/layout_v001.usd"], "/show/layout_v002.usd",
+                                "/show/layout_v001.usd"), ["/show/layout_v002.usd", "/a/layout_v001.usd", "/b/layout_v001.usd"])
+        # The artist already added the new version: it stays where it is and the old one goes.
+        self.assertEqual(update(["/show/layout_v001.usd", "/local/extra.usda", "/show/layout_v002.usd"],
+                                "/show/layout_v002.usd", "/show/layout_v001.usd"),
+                         ["/local/extra.usda", "/show/layout_v002.usd"])
+        self.assertEqual(update(["/show/layout_v002.usd"], "/show/layout_v002.usd", "/show/layout_v001.usd"),
+                         ["/show/layout_v002.usd"])
+
 
 class CustomRangeAndValidatorsTest(unittest.TestCase):
     """Custom frame ranges and the Write validators, through the real creator and collector."""
